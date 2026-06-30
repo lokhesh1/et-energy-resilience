@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+.env
+.vscode/
+*.log
+
+**/CLAUDE.md
+
+info.md

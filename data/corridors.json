@@ -1,0 +1,82 @@
+[
+  {
+    "id": "strait_of_hormuz",
+    "name": "Strait of Hormuz",
+    "region": "Middle East",
+    "chokepoint": true,
+    "baseline_flow_mbd": 21.0,
+    "risk_factors": ["geopolitical", "iran_tensions"],
+    "alternative_routes": ["cape_of_good_hope"],
+    "notes": "~20% of global oil trade; Iran closure threat"
+  },
+  {
+    "id": "suez_canal",
+    "name": "Suez Canal",
+    "region": "North Africa",
+    "chokepoint": true,
+    "baseline_flow_mbd": 5.5,
+    "risk_factors": ["geopolitical", "houthi_attacks"],
+    "alternative_routes": ["cape_of_good_hope"],
+    "notes": "Red Sea Houthi threat; SUMED pipeline bypass possible"
+  },
+  {
+    "id": "malacca_strait",
+    "name": "Strait of Malacca",
+    "region": "Southeast Asia",
+    "chokepoint": true,
+    "baseline_flow_mbd": 16.0,
+    "risk_factors": ["piracy", "vessel_congestion"],
+    "alternative_routes": ["lombok_strait", "sunda_strait"],
+    "notes": "Primary route for Middle East crude to India, China, Japan"
+  },
+  {
+    "id": "bab_el_mandeb",
+    "name": "Bab el-Mandeb",
+    "region": "Horn of Africa",
+    "chokepoint": true,
+    "baseline_flow_mbd": 6.2,
+    "risk_factors": ["geopolitical", "houthi_attacks", "piracy"],
+    "alternative_routes": ["cape_of_good_hope"],
+    "notes": "Gateway between Red Sea and Gulf of Aden"
+  },
+  {
+    "id": "turkish_straits",
+    "name": "Turkish Straits (Bosphorus)",
+    "region": "Europe",
+    "chokepoint": true,
+    "baseline_flow_mbd": 2.9,
+    "risk_factors": ["geopolitical", "russia_ukraine_conflict"],
+    "alternative_routes": ["danish_straits"],
+    "notes": "Key export route for Caspian and Black Sea crude"
+  },
+  {
+    "id": "danish_straits",
+    "name": "Danish Straits",
+    "region": "Europe",
+    "chokepoint": false,
+    "baseline_flow_mbd": 3.0,
+    "risk_factors": ["weather", "vessel_size_limit"],
+    "alternative_routes": ["turkish_straits"],
+    "notes": "Baltic Sea crude outlet; shallow draft limits VLCC passage"
+  },
+  {
+    "id": "cape_of_good_hope",
+    "name": "Cape of Good Hope",
+    "region": "Southern Africa",
+    "chokepoint": false,
+    "baseline_flow_mbd": 4.5,
+    "risk_factors": ["weather", "long_voyage_cost"],
+    "alternative_routes": ["suez_canal"],
+    "notes": "Primary diversion route when Suez/Bab el-Mandeb disrupted"
+  },
+  {
+    "id": "panama_canal",
+    "name": "Panama Canal",
+    "region": "Central America",
+    "chokepoint": true,
+    "baseline_flow_mbd": 0.9,
+    "risk_factors": ["drought", "vessel_size_limit"],
+    "alternative_routes": ["cape_horn"],
+    "notes": "Low oil volume but critical for LNG and refined products"
+  }
+]
