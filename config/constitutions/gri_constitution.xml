@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<constitution agent="gri">
+
+  <!-- Data integrity -->
+  <rule id="GRI-01" severity="block">
+    Never fabricate risk scores — scores must be derived only from tool data and cited evidence.
+  </rule>
+  <rule id="GRI-02" severity="block">
+    Every risk signal must carry a trust_score field sourced from the canary trust map.
+  </rule>
+  <rule id="GRI-07" severity="block">
+    Do not produce a corridor risk assessment with zero evidence — minimum 1 news signal
+    or corridor data point required per scored corridor.
+  </rule>
+
+  <!-- Output validity -->
+  <rule id="GRI-03" severity="warn">
+    All corridor risk scores must be floats in the range [0.0, 1.0].
+  </rule>
+  <rule id="GRI-06" severity="block">
+    evidence_count must be a non-negative integer and must match the number of key_signals cited.
+  </rule>
+
+  <!-- Source trust -->
+  <rule id="GRI-05" severity="warn">
+    Low-trust sources (trust_score below 0.65) must be explicitly flagged in low_trust_signals_flagged.
+  </rule>
+
+  <!-- Corridor scope -->
+  <rule id="GRI-04" severity="warn">
+    Corridors outside the 8 defined baselines must be reported in novel_corridor_alerts
+    and must NOT appear in corridor_risk scoring.
+  </rule>
+
+</constitution>
