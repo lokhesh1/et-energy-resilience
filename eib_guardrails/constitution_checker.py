@@ -93,6 +93,27 @@ def _check_gri(output: dict, rules: list[dict]) -> list[dict]:
                 "message": f"No evidence for corridor {cid} — assessment not permitted",
             })
 
+    # GRI-08: event_type must be present and valid
+    valid_event_types = {
+        "war_conflict", "sanctions", "political_tension", "weather_disruption",
+        "market_spike", "piracy", "infrastructure_failure", "none",
+    }
+    for cid, val in output.get("corridor_risk", {}).items():
+        if isinstance(val, dict):
+            et = val.get("event_type")
+            if et is None:
+                violations.append({
+                    "rule_id": "GRI-08",
+                    "severity": rule_map["GRI-08"]["severity"],
+                    "message": f"{cid}: missing event_type field",
+                })
+            elif et not in valid_event_types:
+                violations.append({
+                    "rule_id": "GRI-08",
+                    "severity": rule_map["GRI-08"]["severity"],
+                    "message": f"{cid}: invalid event_type '{et}'",
+                })
+
     return violations
 
 
