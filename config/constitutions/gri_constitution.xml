@@ -32,4 +32,11 @@
     and must NOT appear in corridor_risk scoring.
   </rule>
 
+  <!-- Event classification -->
+  <rule id="GRI-08" severity="warn">
+    Every scored corridor must include an event_type field set to one of:
+    war_conflict, sanctions, political_tension, weather_disruption,
+    market_spike, piracy, infrastructure_failure, none.
+  </rule>
+
 </constitution>
