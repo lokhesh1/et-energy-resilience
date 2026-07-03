@@ -48,6 +48,9 @@ CHAIN OF EVIDENCE INSTRUCTIONS:
 1. For each of the 8 known corridors, list relevant signals from above (key_signals).
 2. Derive score from signal count × trust weight — show reasoning in one sentence.
 3. Any corridor name NOT in the 8 known ones goes to novel_corridor_alerts only.
+4. Classify the dominant risk driver for each corridor as one of:
+   war_conflict | sanctions | political_tension | weather_disruption |
+   market_spike | piracy | infrastructure_failure | none
 
 Return this exact JSON schema:
 {{
@@ -57,7 +60,8 @@ Return this exact JSON schema:
       "confidence": <float 0.0-1.0>,
       "evidence_count": <int matching key_signals length>,
       "key_signals": ["<exact article title>"],
-      "reasoning": "<one sentence>"
+      "reasoning": "<one sentence>",
+      "event_type": "<one of the 8 valid types above>"
     }}
   }},
   "novel_corridor_alerts": ["<name>"],
