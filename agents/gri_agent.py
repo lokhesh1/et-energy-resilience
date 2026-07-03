@@ -9,6 +9,7 @@ from graph.eib_state import EnergyIntelligenceBoard, StigmergyMarker
 from eib_guardrails.constitution_checker import check as constitution_check
 from tools.corridor_status import get_corridor_status
 from tools.news_fetcher import fetch_news
+from memory.xmemory import XMemory
 
 KNOWN_CORRIDORS = {
     "strait_of_hormuz", "suez_canal", "malacca_strait", "bab_el_mandeb",
@@ -16,6 +17,13 @@ KNOWN_CORRIDORS = {
 }
 
 _client = OpenAI(api_key=OPENROUTER_API_KEY, base_url=OPENROUTER_BASE_URL)
+
+# Shared long-term memory facade. Lazy inside — no cloud connection on import.
+_xmemory = XMemory()
+
+# Persist only notable risks (matches the pheromone-deposit threshold) so the
+# episodic log stays signal, not noise.
+_MEMORY_PERSIST_THRESHOLD = 0.6
 
 _SYSTEM_PROMPT = """You are a Geopolitical Risk Intelligence (GRI) analyst for Indian energy supply chains.
 
@@ -158,7 +166,40 @@ def gri_node(state: EnergyIntelligenceBoard) -> dict:
     # ── 6. Deposit stigmergy pheromones ───────────────────────────────────
     markers = _deposit_pheromones(raw_corridor_risk)
 
-    # TODO: xmemory.store(risk_signals=articles, corridor_risk=corridor_risk)
+    # ── 7. Persist notable risk signals to long-term memory ────────────────
+    # Dual-write (episodic + semantic) via the xMemory facade. The geopolitical
+    # event_type lives in the payload so decay half-lives apply on recall.
+    try:
+        for cid, v in raw_corridor_risk.items():
+            if cid not in KNOWN_CORRIDORS:
+                continue
+            entry = v if isinstance(v, dict) else {}
+            score = float(entry.get("score", v) if isinstance(v, dict) else v)
+            if score < _MEMORY_PERSIST_THRESHOLD:
+                continue
+            # Searchable text = what actually happened (the cited signals), not the
+            # scoring rationale — that's what future "have we seen this?" recall needs.
+            signals = entry.get("key_signals") or []
+            memory_text = (
+                "; ".join(signals) if signals
+                else entry.get("reasoning") or f"{cid} elevated risk {score:.2f}"
+            )
+            _xmemory.remember(
+                event_type="risk_assessment",
+                agent="gri_agent",
+                payload={
+                    "corridor":    cid,
+                    "score":       round(score, 4),
+                    "event_type":  entry.get("event_type", "none"),
+                    "key_signals": signals,
+                    "reasoning":   entry.get("reasoning", ""),
+                    "query":       query,
+                },
+                outcome="success",
+                text=memory_text,
+            )
+    except Exception:
+        pass  # memory is best-effort; never break the node
 
     return {
         "current_agent":    "gri_agent",
