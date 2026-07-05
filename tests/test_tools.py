@@ -345,3 +345,177 @@ def test_apply_and_clear_incident():
     r2 = get_corridor_status()
     malacca2 = next(c for c in r2["data"]["corridors"] if c["id"] == "malacca_strait")
     assert malacca2["disruption_pct"] == 0.0
+
+
+# ── Fixture: isolate apply_incident side-effects between tests ────────────────
+
+@pytest.fixture(autouse=True)
+def _clear_all_incidents():
+    for cid in CORRIDOR_IDS:
+        clear_incident(cid)
+    yield
+    for cid in CORRIDOR_IDS:
+        clear_incident(cid)
+
+
+# ── corridor_status: file-missing fallback ────────────────────────────────────
+
+def test_corridor_status_file_missing_returns_failed():
+    with patch("tools.corridor_status._load_baselines", side_effect=FileNotFoundError("no file")):
+        result = get_corridor_status()
+    assert result["status"] == "failed"
+    assert "error" in result["data"]
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# fetch_news — httpx-level tests
+# These test _fetch_newsapi and _fetch_gdelt with a mocked httpx response,
+# verifying that each source's JSON schema is parsed into the correct article dict.
+# ═══════════════════════════════════════════════════════════════════════════════
+import asyncio
+import httpx
+from tools.news_fetcher import _fetch_newsapi, _fetch_gdelt
+
+NEWSDATA_JSON = {
+    "results": [
+        {
+            "title":       "Hormuz shipping lanes under threat",
+            "link":        "https://reuters.com/hormuz",
+            "source_id":   "reuters",
+            "pubDate":     "2026-07-01T10:00:00",
+            "description": "Rising tensions in the Persian Gulf.",
+        },
+        {
+            "title":       "Iran warns of retaliation",
+            "link":        "https://ft.com/iran",
+            "source_id":   "ft",
+            "pubDate":     "2026-07-01T09:00:00",
+            "description": "Statement from Iran foreign ministry.",
+        },
+    ]
+}
+
+GDELT_JSON = {
+    "articles": [
+        {
+            "title":    "Gulf crisis deepens",
+            "url":      "https://bloomberg.com/gulf",
+            "domain":   "bloomberg.com",
+            "seendate": "2026-07-01T08:00:00",
+        }
+    ]
+}
+
+
+def _mock_response(json_data):
+    resp = MagicMock()
+    resp.raise_for_status = MagicMock()
+    resp.json = MagicMock(return_value=json_data)
+    return resp
+
+
+def _make_client(newsdata_json=None, gdelt_json=None,
+                 newsdata_error=None, gdelt_error=None):
+    """AsyncMock client whose .get() dispatches by URL."""
+    client = AsyncMock()
+
+    async def mock_get(url, **kwargs):
+        if "newsdata" in url:
+            if newsdata_error:
+                raise newsdata_error("newsdata failure")
+            return _mock_response(newsdata_json or NEWSDATA_JSON)
+        else:
+            if gdelt_error:
+                raise gdelt_error("gdelt failure")
+            return _mock_response(gdelt_json or GDELT_JSON)
+
+    client.get = mock_get
+    return client
+
+
+# ── _fetch_newsapi ────────────────────────────────────────────────────────────
+
+def test_fetch_newsapi_returns_correct_article_count():
+    client = _make_client()
+    articles = asyncio.run(_fetch_newsapi(client, "hormuz", "test_key"))
+    assert len(articles) == len(NEWSDATA_JSON["results"])
+
+
+def test_fetch_newsapi_maps_title_field():
+    client = _make_client()
+    articles = asyncio.run(_fetch_newsapi(client, "hormuz", "test_key"))
+    assert articles[0]["title"] == "Hormuz shipping lanes under threat"
+
+
+def test_fetch_newsapi_maps_url_from_link():
+    client = _make_client()
+    articles = asyncio.run(_fetch_newsapi(client, "hormuz", "test_key"))
+    assert articles[0]["url"] == "https://reuters.com/hormuz"
+
+
+def test_fetch_newsapi_maps_source_from_source_id():
+    client = _make_client()
+    articles = asyncio.run(_fetch_newsapi(client, "hormuz", "test_key"))
+    assert articles[0]["source"] == "reuters"
+
+
+def test_fetch_newsapi_sets_origin_to_newsdata():
+    client = _make_client()
+    articles = asyncio.run(_fetch_newsapi(client, "hormuz", "test_key"))
+    assert all(a["origin"] == "newsdata" for a in articles)
+
+
+def test_fetch_newsapi_raises_on_http_error():
+    client = _make_client(newsdata_error=httpx.ConnectError)
+    with pytest.raises(httpx.ConnectError):
+        asyncio.run(_fetch_newsapi(client, "hormuz", "test_key"))
+
+
+def test_fetch_newsapi_empty_results_returns_empty_list():
+    client = _make_client(newsdata_json={"results": []})
+    articles = asyncio.run(_fetch_newsapi(client, "hormuz", "test_key"))
+    assert articles == []
+
+
+# ── _fetch_gdelt ──────────────────────────────────────────────────────────────
+
+def test_fetch_gdelt_returns_correct_article_count():
+    client = _make_client()
+    articles = asyncio.run(_fetch_gdelt(client, "hormuz"))
+    assert len(articles) == len(GDELT_JSON["articles"])
+
+
+def test_fetch_gdelt_maps_title_field():
+    client = _make_client()
+    articles = asyncio.run(_fetch_gdelt(client, "hormuz"))
+    assert articles[0]["title"] == "Gulf crisis deepens"
+
+
+def test_fetch_gdelt_maps_url_field():
+    client = _make_client()
+    articles = asyncio.run(_fetch_gdelt(client, "hormuz"))
+    assert articles[0]["url"] == "https://bloomberg.com/gulf"
+
+
+def test_fetch_gdelt_maps_source_from_domain():
+    client = _make_client()
+    articles = asyncio.run(_fetch_gdelt(client, "hormuz"))
+    assert articles[0]["source"] == "bloomberg.com"
+
+
+def test_fetch_gdelt_sets_origin_to_gdelt():
+    client = _make_client()
+    articles = asyncio.run(_fetch_gdelt(client, "hormuz"))
+    assert all(a["origin"] == "gdelt" for a in articles)
+
+
+def test_fetch_gdelt_raises_on_http_error():
+    client = _make_client(gdelt_error=httpx.ConnectError)
+    with pytest.raises(httpx.ConnectError):
+        asyncio.run(_fetch_gdelt(client, "hormuz"))
+
+
+def test_fetch_gdelt_empty_articles_returns_empty_list():
+    client = _make_client(gdelt_json={"articles": []})
+    articles = asyncio.run(_fetch_gdelt(client, "hormuz"))
+    assert articles == []

@@ -1,0 +1,33 @@
+{
+  "_note": "DSM deterministic model parameters. duration_days is the physical disruption length by event type (distinct from memory decay half-lives). india_import_share is the fraction of a corridor's flow bound for India. reroute_deltas is the transit/cost penalty when diverting to the corridor's alternative route.",
+  "duration_days": {
+    "war_conflict": 42,
+    "sanctions": 90,
+    "political_tension": 30,
+    "infrastructure_failure": 21,
+    "market_spike": 14,
+    "piracy": 14,
+    "weather_disruption": 7,
+    "none": 14
+  },
+  "india_import_share": {
+    "strait_of_hormuz": 0.62,
+    "bab_el_mandeb": 0.20,
+    "suez_canal": 0.12,
+    "malacca_strait": 0.05,
+    "cape_of_good_hope": 0.10,
+    "turkish_straits": 0.05,
+    "danish_straits": 0.03,
+    "panama_canal": 0.02
+  },
+  "reroute_deltas": {
+    "strait_of_hormuz": {"added_transit_days": 20, "freight_cost_mult": 1.6},
+    "suez_canal": {"added_transit_days": 14, "freight_cost_mult": 1.35},
+    "bab_el_mandeb": {"added_transit_days": 14, "freight_cost_mult": 1.35},
+    "malacca_strait": {"added_transit_days": 3, "freight_cost_mult": 1.1},
+    "turkish_straits": {"added_transit_days": 5, "freight_cost_mult": 1.2},
+    "cape_of_good_hope": {"added_transit_days": 10, "freight_cost_mult": 1.3},
+    "danish_straits": {"added_transit_days": 4, "freight_cost_mult": 1.15},
+    "panama_canal": {"added_transit_days": 12, "freight_cost_mult": 1.4}
+  }
+}

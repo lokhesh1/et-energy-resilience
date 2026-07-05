@@ -22,6 +22,7 @@ class EnergyIntelligenceBoard(TypedDict):
     # ── GRI ──
     risk_signals: list[dict]
     corridor_risk: dict[str, float]   # corridor_id → risk score
+    corridor_events: dict[str, str]   # corridor_id → event_type (drives DSM/decay)
 
     # ── DSM ──
     scenarios: list[dict]

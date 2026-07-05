@@ -12,7 +12,7 @@ def _good_article():
     return {"title": "Hormuz tensions rise", "trust_score": 0.95, "trusted": True}
 
 
-def _corridor_entry(score=0.75, signals=None):
+def _corridor_entry(score=0.75, signals=None, event_type="war_conflict"):
     signals = signals or ["Hormuz tensions rise"]
     return {
         "score":          score,
@@ -20,6 +20,7 @@ def _corridor_entry(score=0.75, signals=None):
         "evidence_count": len(signals),
         "key_signals":    signals,
         "reasoning":      "Signal count × trust weight.",
+        "event_type":     event_type,
     }
 
 
@@ -169,6 +170,34 @@ def test_gri07_one_evidence_passes():
     out["corridor_risk"]["strait_of_hormuz"]["key_signals"] = ["One signal"]
     result = check("gri", out)
     assert "GRI-07" not in _rule_ids(result)
+
+
+# ── GRI-08 ────────────────────────────────────────────────────────────────────
+
+def test_gri08_missing_event_type_warns():
+    out = _good_output()
+    del out["corridor_risk"]["strait_of_hormuz"]["event_type"]
+    result = check("gri", out)
+    assert "GRI-08" in _rule_ids(result)
+
+
+def test_gri08_invalid_event_type_warns():
+    out = _good_output()
+    out["corridor_risk"]["strait_of_hormuz"]["event_type"] = "earthquake"
+    result = check("gri", out)
+    assert "GRI-08" in _rule_ids(result)
+
+
+def test_gri08_all_valid_event_types_pass():
+    valid_types = [
+        "war_conflict", "sanctions", "political_tension", "weather_disruption",
+        "market_spike", "piracy", "infrastructure_failure", "none",
+    ]
+    for et in valid_types:
+        out = _good_output()
+        out["corridor_risk"]["strait_of_hormuz"]["event_type"] = et
+        result = check("gri", out)
+        assert "GRI-08" not in _rule_ids(result), f"GRI-08 fired for valid type: {et}"
 
 
 # ── Missing constitution ───────────────────────────────────────────────────────

@@ -11,6 +11,14 @@ import pytest
 from agents.gri_agent import gri_node
 
 
+# ── Auto-mock long-term memory so unit tests never touch the real cloud ────────
+
+@pytest.fixture(autouse=True)
+def _mock_xmemory():
+    with patch("agents.gri_agent._xmemory") as m:
+        yield m
+
+
 # ── Shared mock data ──────────────────────────────────────────────────────────
 
 MOCK_ARTICLES = [
@@ -61,7 +69,8 @@ MOCK_LLM_OUTPUT = {
                 "Hormuz shipping lanes disrupted",
                 "Iran navy exercises near strait",
             ],
-            "reasoning": "Two high-trust signals with direct corridor reference.",
+            "reasoning":   "Two high-trust signals with direct corridor reference.",
+            "event_type":  "war_conflict",
         },
         "suez_canal": {
             "score":          0.20,
@@ -69,6 +78,7 @@ MOCK_LLM_OUTPUT = {
             "evidence_count": 1,
             "key_signals":    ["Hormuz shipping lanes disrupted"],
             "reasoning":      "Indirect signal only — baseline default applied.",
+            "event_type":     "none",
         },
     },
     "novel_corridor_alerts":     [],
@@ -200,6 +210,46 @@ def test_pheromone_deposited_by_gri_agent():
         assert marker["deposited_by"] == "gri_agent"
         assert marker["type"] == "risk"
         assert 0.0 <= marker["intensity"] <= 1.0
+
+
+# ── Long-term memory persistence (xMemory wiring) ─────────────────────────────
+
+def test_notable_corridor_persisted_low_risk_not(_mock_xmemory):
+    # hormuz 0.85 (>= 0.6) persisted; suez 0.20 (< 0.6) skipped
+    fetch_p, client_p, llm_out = _patch_gri()
+    with fetch_p, client_p as mock_client:
+        mock_client.chat.completions.create.return_value = _make_llm_response(llm_out)
+        gri_node(MOCK_STATE)
+
+    persisted = [c.kwargs["payload"]["corridor"] for c in _mock_xmemory.remember.call_args_list]
+    assert "strait_of_hormuz" in persisted
+    assert "suez_canal" not in persisted
+
+
+def test_persisted_payload_carries_event_type_for_decay(_mock_xmemory):
+    fetch_p, client_p, llm_out = _patch_gri()
+    with fetch_p, client_p as mock_client:
+        mock_client.chat.completions.create.return_value = _make_llm_response(llm_out)
+        gri_node(MOCK_STATE)
+
+    hormuz_call = next(
+        c for c in _mock_xmemory.remember.call_args_list
+        if c.kwargs["payload"]["corridor"] == "strait_of_hormuz"
+    )
+    assert hormuz_call.kwargs["payload"]["event_type"] == "war_conflict"
+    assert hormuz_call.kwargs["event_type"] == "risk_assessment"
+
+
+def test_memory_failure_does_not_break_node(_mock_xmemory):
+    # even if persistence raises, the node must still return normally
+    _mock_xmemory.remember.side_effect = RuntimeError("cloud down")
+    fetch_p, client_p, llm_out = _patch_gri()
+    with fetch_p, client_p as mock_client:
+        mock_client.chat.completions.create.return_value = _make_llm_response(llm_out)
+        result = gri_node(MOCK_STATE)
+
+    assert result["current_agent"] == "gri_agent"
+    assert "strait_of_hormuz" in result["corridor_risk"]
 
 
 # ── Audit trail ───────────────────────────────────────────────────────────────

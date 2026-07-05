@@ -11,6 +11,8 @@ GRI_MODEL           = "google/gemini-2.5-flash-lite"   # cheapest Flash; ~$0.001
 # Distillation is a judgment task (extract reusable lessons) — kept on its own
 # knob so it can be upgraded independently of GRI. Prod model TBD.
 DISTILLER_MODEL     = "google/gemini-2.5-flash"
+# DSM narrative is decoration only (numbers are deterministic) — cheapest Flash.
+DSM_MODEL           = "google/gemini-2.5-flash-lite"
 
 # ── News / data sources ──
 NEWSAPI_KEY = os.getenv("NEWSAPI_KEY")   # NewsData.io key (pub_...)
@@ -31,6 +33,7 @@ PINECONE_INDEX   = os.getenv("PINECONE_INDEX", "eib-semantic")
 
 # ── Tunables ──
 RISK_THRESHOLD         = 0.7
+DSM_MODEL_THRESHOLD    = 0.5      # min corridor_risk score for DSM to model a scenario
 MEMORY_DECAY_HALFLIFE  = 30       # days
 TRUST_THRESHOLD        = 0.65
 BRENT_TICKER           = "BZ=F"

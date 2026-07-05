@@ -163,7 +163,16 @@ def gri_node(state: EnergyIntelligenceBoard) -> dict:
         if cid in KNOWN_CORRIDORS
     }
 
-    # ── 6. Deposit stigmergy pheromones ───────────────────────────────────
+    # ── 6a. Carry event_type forward for DSM + decay ──────────────────────
+    # corridor_risk collapses to {cid: float}; DSM's scenario model is event-type
+    # driven, so surface the classification separately in shared state.
+    corridor_events = {
+        cid: (v.get("event_type", "none") if isinstance(v, dict) else "none")
+        for cid, v in raw_corridor_risk.items()
+        if cid in KNOWN_CORRIDORS
+    }
+
+    # ── 6b. Deposit stigmergy pheromones ───────────────────────────────────
     markers = _deposit_pheromones(raw_corridor_risk)
 
     # ── 7. Persist notable risk signals to long-term memory ────────────────
@@ -205,6 +214,7 @@ def gri_node(state: EnergyIntelligenceBoard) -> dict:
         "current_agent":    "gri_agent",
         "risk_signals":     articles,
         "corridor_risk":    corridor_risk,
+        "corridor_events":  corridor_events,
         "stigmergy_markers": markers,
         "audit_trail":      audit,
         "constitution_flags": llm_check.get("violations", []),

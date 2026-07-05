@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<constitution agent="dsm">
+
+  <!-- Numeric integrity: DSM's numbers are deterministic and must be self-consistent.
+       The LLM narrative is decoration only and never a load-bearing value. -->
+  <rule id="DSM-01" severity="block">
+    volume_at_risk_mbd must be a number in [0, baseline_flow_mbd] — a corridor
+    cannot lose more oil than it carries.
+  </rule>
+  <rule id="DSM-02" severity="block">
+    duration_days must be a positive number — a modelled disruption has non-zero length.
+  </rule>
+  <rule id="DSM-04" severity="block">
+    disruption_fraction must be a float in [0.0, 1.0].
+  </rule>
+
+  <!-- Consistency -->
+  <rule id="DSM-03" severity="warn">
+    india_exposure_mbd must not exceed volume_at_risk_mbd for the same scenario.
+  </rule>
+  <rule id="DSM-05" severity="warn">
+    Every scenario must reference one of the 8 known corridors.
+  </rule>
+
+  <!-- Classification carried from GRI -->
+  <rule id="DSM-06" severity="warn">
+    Each scenario must carry an event_type set to one of:
+    war_conflict, sanctions, political_tension, weather_disruption,
+    market_spike, piracy, infrastructure_failure, none.
+  </rule>
+
+  <!-- Arithmetic cross-check: independently recompute derived numbers from their
+       primitives and assert they match. Catches arithmetic drift / regressions
+       that stay within bounds and would otherwise pass silently. -->
+  <rule id="DSM-07" severity="block">
+    volume_at_risk_mbd must equal baseline_flow_mbd x disruption_fraction
+    (within rounding tolerance).
+  </rule>
+  <rule id="DSM-08" severity="block">
+    india_exposure_mbd must equal volume_at_risk_mbd x india_import_share
+    (within rounding tolerance).
+  </rule>
+
+</constitution>
