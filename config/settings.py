@@ -13,6 +13,10 @@ GRI_MODEL           = "google/gemini-2.5-flash-lite"   # cheapest Flash; ~$0.001
 DISTILLER_MODEL     = "google/gemini-2.5-flash"
 # DSM narrative is decoration only (numbers are deterministic) — cheapest Flash.
 DSM_MODEL           = "google/gemini-2.5-flash-lite"
+# Coordinator writes the final board-level recommendation (synthesis over the whole
+# run) — the most judgment-heavy narrative, so its own knob at the Flash tier. The
+# response_plan itself is deterministic; the LLM only phrases it, template fallback.
+COORDINATOR_MODEL   = "google/gemini-2.5-flash"
 
 # ── News / data sources ──
 NEWSAPI_KEY = os.getenv("NEWSAPI_KEY")   # NewsData.io key (pub_...)
@@ -30,6 +34,14 @@ SUPABASE_URL     = os.getenv("SUPABASE_URL")
 SUPABASE_KEY     = os.getenv("SUPABASE_KEY")
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 PINECONE_INDEX   = os.getenv("PINECONE_INDEX", "eib-semantic")
+
+# ── Twin loop (continuous SCTD) ──
+# The digital twin refreshes on its OWN clock, independent of user queries: a
+# background task re-runs GRI→DSM→SCTD every interval and stores the latest snapshot
+# the API serves. Enabled by default (it's the "24/7 crisis team" feature); each
+# refresh is a live GRI news+LLM read, so tune the interval / disable for dev.
+TWIN_LOOP_ENABLED      = os.getenv("TWIN_LOOP_ENABLED", "true").lower() == "true"
+TWIN_REFRESH_INTERVAL  = int(os.getenv("TWIN_REFRESH_INTERVAL", "180"))  # seconds
 
 # ── Tunables ──
 RISK_THRESHOLD         = 0.7

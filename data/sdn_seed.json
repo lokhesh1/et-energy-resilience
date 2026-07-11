@@ -1,0 +1,28 @@
+{
+  "_note": "SEEDED OFAC SDN SUBSET — offline demo cache containing ONLY the sanctioned entities present in data/suppliers.json. This is NOT the full ~50MB treasury.gov SDN list. tools/sanctions_check.py matches a bid's supplier string against 'name' + 'aliases' (normalised: lowercased, punctuation-stripped, token match) so 'NIOC (Iran)' matches alias 'NIOC'. Live OFAC SDN/Consolidated XML refresh is a deferred scheduled job (never on the request path) — see the priority TODO in CLAUDE.md.",
+  "generated_at": "2026-07-07",
+  "source": "seeded_manual",
+  "entities": [
+    {
+      "name": "National Iranian Oil Company",
+      "aliases": ["NIOC", "National Iranian Oil Co"],
+      "programs": ["IRAN", "IRAN-EO13846"],
+      "type": "entity",
+      "country": "Iran"
+    },
+    {
+      "name": "Rosneft Oil Company",
+      "aliases": ["Rosneft", "PAO NK Rosneft", "Rosneft Trading"],
+      "programs": ["RUSSIA-EO14024"],
+      "type": "entity",
+      "country": "Russia"
+    },
+    {
+      "name": "Petroleos de Venezuela SA",
+      "aliases": ["PDVSA", "Petroleos de Venezuela"],
+      "programs": ["VENEZUELA-EO13850"],
+      "type": "entity",
+      "country": "Venezuela"
+    }
+  ]
+}

@@ -1,0 +1,203 @@
+{
+  "_note": "ILLUSTRATIVE VALUES — capacities are approximate public figures (mbd); corridor_dependency shares are hand-seeded plausible estimates of the fraction of each refinery's crude intake transiting a corridor, NOT sourced from an authoritative dataset. Shares per refinery sum to < 1.0; the remainder is domestic crude (Bombay High etc.) or overland supply, which is not corridor-exposed. Calibrate from PPAC/Kpler/Vortexa before treating as real. Tracked in CLAUDE.md backlog.",
+  "refineries": [
+    {
+      "id": "jamnagar_ril",
+      "name": "Jamnagar (RIL)",
+      "operator": "Reliance Industries",
+      "state": "Gujarat",
+      "coast": "west",
+      "lat": 22.35,
+      "lon": 69.83,
+      "capacity_mbd": 1.24,
+      "crude_flexibility": "high",
+      "corridor_dependency": {
+        "strait_of_hormuz": 0.45,
+        "bab_el_mandeb": 0.15,
+        "suez_canal": 0.10,
+        "cape_of_good_hope": 0.20
+      }
+    },
+    {
+      "id": "vadinar_nayara",
+      "name": "Vadinar (Nayara)",
+      "operator": "Nayara Energy",
+      "state": "Gujarat",
+      "coast": "west",
+      "lat": 22.37,
+      "lon": 69.71,
+      "capacity_mbd": 0.40,
+      "crude_flexibility": "high",
+      "corridor_dependency": {
+        "strait_of_hormuz": 0.30,
+        "bab_el_mandeb": 0.20,
+        "suez_canal": 0.15,
+        "cape_of_good_hope": 0.25
+      }
+    },
+    {
+      "id": "kochi_bpcl",
+      "name": "Kochi (BPCL)",
+      "operator": "BPCL",
+      "state": "Kerala",
+      "coast": "west",
+      "lat": 9.96,
+      "lon": 76.27,
+      "capacity_mbd": 0.31,
+      "crude_flexibility": "medium",
+      "corridor_dependency": {
+        "strait_of_hormuz": 0.50,
+        "bab_el_mandeb": 0.15,
+        "suez_canal": 0.05,
+        "cape_of_good_hope": 0.10
+      }
+    },
+    {
+      "id": "mangalore_mrpl",
+      "name": "Mangalore (MRPL)",
+      "operator": "MRPL",
+      "state": "Karnataka",
+      "coast": "west",
+      "lat": 12.92,
+      "lon": 74.80,
+      "capacity_mbd": 0.30,
+      "crude_flexibility": "medium",
+      "corridor_dependency": {
+        "strait_of_hormuz": 0.55,
+        "bab_el_mandeb": 0.10,
+        "suez_canal": 0.05,
+        "cape_of_good_hope": 0.10
+      }
+    },
+    {
+      "id": "koyali_iocl",
+      "name": "Koyali / Gujarat (IOCL)",
+      "operator": "IOCL",
+      "state": "Gujarat",
+      "coast": "west",
+      "lat": 22.37,
+      "lon": 73.12,
+      "capacity_mbd": 0.27,
+      "crude_flexibility": "medium",
+      "corridor_dependency": {
+        "strait_of_hormuz": 0.40,
+        "bab_el_mandeb": 0.10,
+        "cape_of_good_hope": 0.10
+      }
+    },
+    {
+      "id": "panipat_iocl",
+      "name": "Panipat (IOCL)",
+      "operator": "IOCL",
+      "state": "Haryana",
+      "coast": "inland-west-fed",
+      "lat": 29.42,
+      "lon": 76.97,
+      "capacity_mbd": 0.30,
+      "crude_flexibility": "medium",
+      "corridor_dependency": {
+        "strait_of_hormuz": 0.45,
+        "bab_el_mandeb": 0.15,
+        "cape_of_good_hope": 0.10
+      }
+    },
+    {
+      "id": "mathura_iocl",
+      "name": "Mathura (IOCL)",
+      "operator": "IOCL",
+      "state": "Uttar Pradesh",
+      "coast": "inland-west-fed",
+      "lat": 27.52,
+      "lon": 77.65,
+      "capacity_mbd": 0.16,
+      "crude_flexibility": "low",
+      "corridor_dependency": {
+        "strait_of_hormuz": 0.45,
+        "bab_el_mandeb": 0.10,
+        "cape_of_good_hope": 0.10
+      }
+    },
+    {
+      "id": "bina_bpcl",
+      "name": "Bina (BPCL)",
+      "operator": "BPCL",
+      "state": "Madhya Pradesh",
+      "coast": "inland-west-fed",
+      "lat": 24.18,
+      "lon": 78.20,
+      "capacity_mbd": 0.16,
+      "crude_flexibility": "medium",
+      "corridor_dependency": {
+        "strait_of_hormuz": 0.50,
+        "cape_of_good_hope": 0.10
+      }
+    },
+    {
+      "id": "paradip_iocl",
+      "name": "Paradip (IOCL)",
+      "operator": "IOCL",
+      "state": "Odisha",
+      "coast": "east",
+      "lat": 20.28,
+      "lon": 86.67,
+      "capacity_mbd": 0.30,
+      "crude_flexibility": "high",
+      "corridor_dependency": {
+        "strait_of_hormuz": 0.35,
+        "bab_el_mandeb": 0.15,
+        "malacca_strait": 0.10,
+        "cape_of_good_hope": 0.10
+      }
+    },
+    {
+      "id": "visakhapatnam_hpcl",
+      "name": "Visakhapatnam (HPCL)",
+      "operator": "HPCL",
+      "state": "Andhra Pradesh",
+      "coast": "east",
+      "lat": 17.69,
+      "lon": 83.25,
+      "capacity_mbd": 0.30,
+      "crude_flexibility": "medium",
+      "corridor_dependency": {
+        "strait_of_hormuz": 0.40,
+        "bab_el_mandeb": 0.10,
+        "malacca_strait": 0.10,
+        "cape_of_good_hope": 0.05
+      }
+    },
+    {
+      "id": "chennai_cpcl",
+      "name": "Chennai / Manali (CPCL)",
+      "operator": "CPCL (IOCL group)",
+      "state": "Tamil Nadu",
+      "coast": "east",
+      "lat": 13.16,
+      "lon": 80.26,
+      "capacity_mbd": 0.21,
+      "crude_flexibility": "medium",
+      "corridor_dependency": {
+        "strait_of_hormuz": 0.45,
+        "bab_el_mandeb": 0.10,
+        "malacca_strait": 0.05,
+        "cape_of_good_hope": 0.05
+      }
+    },
+    {
+      "id": "haldia_iocl",
+      "name": "Haldia (IOCL)",
+      "operator": "IOCL",
+      "state": "West Bengal",
+      "coast": "east",
+      "lat": 22.03,
+      "lon": 88.06,
+      "capacity_mbd": 0.16,
+      "crude_flexibility": "low",
+      "corridor_dependency": {
+        "strait_of_hormuz": 0.35,
+        "bab_el_mandeb": 0.15,
+        "malacca_strait": 0.10
+      }
+    }
+  ]
+}

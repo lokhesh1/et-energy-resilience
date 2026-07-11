@@ -34,7 +34,8 @@ class EnergyIntelligenceBoard(TypedDict):
 
     # ── Procurement pod (parallel agents append concurrently) ──
     bids: Annotated[list[dict], operator.add]
-    evaluated_bids: list[dict]
+    evaluated_bids: list[dict]        # every bid, scored + ranked (evaluator, single writer)
+    recommended_mix: dict             # chosen cross-region mix that covers the gap
 
     # ── Coordinator ──
     response_plan: dict

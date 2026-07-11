@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<constitution agent="procurement">
+
+  <!-- Bids are deterministic (built from a static catalog + live Brent), so these
+       checks catch a broken bidder/evaluator or a poisoned catalog, not an LLM.
+       The guardrail INDEPENDENTLY re-verifies each bid's sanctions/price/grade
+       claims rather than trusting the flags the bidder attached. -->
+
+  <!-- Sanctions: the hard gate. A sanctioned supplier may be SURFACED (visible,
+       flagged) but must never be cleared for procurement. Re-screened here against
+       the SDN seed regardless of what the bid claims. -->
+  <rule id="PROC-01" severity="block">
+    A bid whose supplier matches the OFAC SDN seed must carry sanctions_status
+    "blocked" and must never appear in a recommended mix. Re-screened independently.
+  </rule>
+
+  <!-- Volume feasibility: cannot buy more than the supplier can lift. -->
+  <rule id="PROC-02" severity="block">
+    volume_mbd must be a number in (0, max_volume_mbd] — a bid cannot offer more
+    crude than the supplier's stated capacity, nor a non-positive volume.
+  </rule>
+
+  <!-- Price sanity + arithmetic cross-check: landed price is Brent + premium.
+       Independently recomputed from its primitives, same as DSM-07/08. -->
+  <rule id="PROC-03" severity="block">
+    price_per_bbl must be positive, the price_premium_usd within a sane band
+    (|premium| &lt;= 40 USD/bbl), and price_per_bbl must equal brent_ref +
+    price_premium_usd within rounding tolerance.
+  </rule>
+
+  <!-- Grade compatibility: warn (not block) — a mismatched grade is a weaker bid,
+       not an illegal one; the evaluator down-ranks it. -->
+  <rule id="PROC-04" severity="warn">
+    A bid whose crude grade no disruption-affected refinery can process
+    (incompatible with all of them) must be flagged as a grade mismatch.
+  </rule>
+
+  <!-- Route self-defeat: warn if the cargo's own delivery corridor is the one
+       that is disrupted (sourcing crude that must transit the closed strait). -->
+  <rule id="PROC-05" severity="warn">
+    A bid whose delivery_corridor is itself a currently disrupted corridor must be
+    flagged — it does not escape the disruption it is meant to relieve.
+  </rule>
+
+  <!-- Evaluator-level: the recommended mix must actually size to the gap. -->
+  <rule id="PROC-06" severity="block">
+    A recommended mix must cover the shortfall within tolerance: total offered
+    volume between 0.8x and 1.3x the gap (neither grossly under- nor over-buying).
+  </rule>
+
+  <!-- Evaluator arithmetic cross-check: the reported mix total must equal the sum
+       of its component volumes (independent recompute). -->
+  <rule id="PROC-07" severity="block">
+    recommended_mix.total_volume_mbd must equal the sum of its component
+    volume_mbd within rounding tolerance.
+  </rule>
+
+</constitution>

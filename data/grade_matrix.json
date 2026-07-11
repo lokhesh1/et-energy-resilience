@@ -1,0 +1,87 @@
+{
+  "_note": "ILLUSTRATIVE — crude grade properties (API gravity, sulfur) are approximate public figures; the light_sweet/medium_sour/heavy_sour band and the flexibility_rules mapping are a SIMPLIFIED proxy for real refinery configuration (Nelson complexity, hydrotreating/coking capacity). NOT sourced from an authoritative dataset. 'type' is stored explicitly on each grade so grade_lookup stays a pure lookup (no threshold math at runtime). Calibrate before treating compatibility as real. Tracked in CLAUDE.md backlog.",
+  "grades": {
+    "bonny_light": {
+      "name": "Bonny Light",
+      "origin": "Nigeria",
+      "api_gravity": 35.0,
+      "sulfur_pct": 0.15,
+      "type": "light_sweet"
+    },
+    "qua_iboe": {
+      "name": "Qua Iboe",
+      "origin": "Nigeria",
+      "api_gravity": 36.0,
+      "sulfur_pct": 0.12,
+      "type": "light_sweet"
+    },
+    "girassol": {
+      "name": "Girassol",
+      "origin": "Angola",
+      "api_gravity": 31.0,
+      "sulfur_pct": 0.33,
+      "type": "medium_sour"
+    },
+    "wti": {
+      "name": "WTI",
+      "origin": "USA",
+      "api_gravity": 39.6,
+      "sulfur_pct": 0.24,
+      "type": "light_sweet"
+    },
+    "wcs": {
+      "name": "Western Canadian Select",
+      "origin": "Canada",
+      "api_gravity": 20.5,
+      "sulfur_pct": 3.50,
+      "type": "heavy_sour"
+    },
+    "lula": {
+      "name": "Lula (Brazil pre-salt)",
+      "origin": "Brazil",
+      "api_gravity": 29.0,
+      "sulfur_pct": 0.40,
+      "type": "medium_sour"
+    },
+    "arab_light": {
+      "name": "Arab Light",
+      "origin": "Saudi Arabia",
+      "api_gravity": 33.0,
+      "sulfur_pct": 1.90,
+      "type": "medium_sour"
+    },
+    "arab_heavy": {
+      "name": "Arab Heavy",
+      "origin": "Saudi Arabia",
+      "api_gravity": 27.0,
+      "sulfur_pct": 2.80,
+      "type": "heavy_sour"
+    },
+    "iranian_heavy": {
+      "name": "Iranian Heavy",
+      "origin": "Iran",
+      "api_gravity": 30.0,
+      "sulfur_pct": 1.80,
+      "type": "medium_sour"
+    },
+    "urals": {
+      "name": "Urals",
+      "origin": "Russia",
+      "api_gravity": 31.0,
+      "sulfur_pct": 1.30,
+      "type": "medium_sour"
+    },
+    "merey": {
+      "name": "Merey",
+      "origin": "Venezuela",
+      "api_gravity": 16.0,
+      "sulfur_pct": 2.50,
+      "type": "heavy_sour"
+    }
+  },
+  "flexibility_rules": {
+    "high":   { "accepts": ["light_sweet", "medium_sour", "heavy_sour"] },
+    "medium": { "accepts": ["light_sweet", "medium_sour"] },
+    "low":    { "accepts": ["light_sweet"] }
+  }
+}

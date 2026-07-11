@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<constitution agent="coordinator">
+
+  <!-- The coordinator's response_plan is deterministic (assembled from the twin +
+       the evaluator's mix); the LLM only phrases the recommendation. These rules
+       guard the COORDINATOR'S OWN decisions — they do not re-derive numbers the
+       GRI/DSM/SCTD/procurement constitutions already own. They catch the failure
+       modes unique to the final synthesis: a false all-clear, a laundered blocked
+       cargo, misreported totals, and dropped upstream flags. -->
+
+  <!-- No all-clear over an open gap. The worst failure a coordinator can make is
+       to report calm while a shortfall is still uncovered (mirror of SCTD-LIVENESS
+       at the board level). -->
+  <rule id="COORD-01" severity="block">
+    If any India-bound shortfall remains uncovered by market supply
+    (residual_gap_mbd &gt; 0, or covers_gap is false while gap_mbd &gt; 0), the
+    escalation_level must be "critical" — never a routine/quiet all-clear.
+  </rule>
+
+  <!-- No blocked cargo in the plan. The evaluator excludes sanctioned bids; the
+       coordinator independently re-screens every committed action so a blocked
+       supplier can never be laundered into the final, approved plan. -->
+  <rule id="COORD-02" severity="block">
+    No committed action in the response_plan may name a sanctions-blocked supplier
+    (sanctions_status "blocked", or an independent SDN re-screen match). The board's
+    final plan must contain only cleared cargo.
+  </rule>
+
+  <!-- Arithmetic consistency with the twin. The plan cannot misreport the shortfall
+       it is responding to, nor its own residual. Independently recomputed. -->
+  <rule id="COORD-03" severity="block">
+    response_plan.situation.gap_mbd must equal twin_state.total_india_shortfall_mbd,
+    and residual_gap_mbd must equal max(0, gap_mbd - covered_mbd), within tolerance.
+  </rule>
+
+  <!-- Nothing dropped. Any block-severity violation raised anywhere in the run must
+       be surfaced in the plan's unresolved_issues — the coordinator is the last gate
+       and cannot silently discard an upstream integrity failure. -->
+  <rule id="COORD-04" severity="warn">
+    If any upstream agent raised a block-severity constitution flag, the
+    response_plan.unresolved_issues must acknowledge at least one of them.
+  </rule>
+
+  <!-- Known vocabulary: escalation_level must be one of the defined bands. -->
+  <rule id="COORD-05" severity="warn">
+    escalation_level must be one of: routine, watch, elevated, critical.
+  </rule>
+
+</constitution>

@@ -7,6 +7,9 @@
     "baseline_flow_mbd": 21.0,
     "risk_factors": ["geopolitical", "iran_tensions"],
     "alternative_routes": ["cape_of_good_hope"],
+    "lat": 26.57,
+    "lon": 56.25,
+    "coord_source": "approximate_manual",
     "notes": "~20% of global oil trade; Iran closure threat"
   },
   {
@@ -17,6 +20,9 @@
     "baseline_flow_mbd": 5.5,
     "risk_factors": ["geopolitical", "houthi_attacks"],
     "alternative_routes": ["cape_of_good_hope"],
+    "lat": 30.02,
+    "lon": 32.55,
+    "coord_source": "approximate_manual",
     "notes": "Red Sea Houthi threat; SUMED pipeline bypass possible"
   },
   {
@@ -27,6 +33,9 @@
     "baseline_flow_mbd": 16.0,
     "risk_factors": ["piracy", "vessel_congestion"],
     "alternative_routes": ["lombok_strait", "sunda_strait"],
+    "lat": 2.50,
+    "lon": 101.30,
+    "coord_source": "approximate_manual",
     "notes": "Primary route for Middle East crude to India, China, Japan"
   },
   {
@@ -37,6 +46,9 @@
     "baseline_flow_mbd": 6.2,
     "risk_factors": ["geopolitical", "houthi_attacks", "piracy"],
     "alternative_routes": ["cape_of_good_hope"],
+    "lat": 12.58,
+    "lon": 43.33,
+    "coord_source": "approximate_manual",
     "notes": "Gateway between Red Sea and Gulf of Aden"
   },
   {
@@ -47,6 +59,9 @@
     "baseline_flow_mbd": 2.9,
     "risk_factors": ["geopolitical", "russia_ukraine_conflict"],
     "alternative_routes": ["danish_straits"],
+    "lat": 41.12,
+    "lon": 29.08,
+    "coord_source": "approximate_manual",
     "notes": "Key export route for Caspian and Black Sea crude"
   },
   {
@@ -57,6 +72,9 @@
     "baseline_flow_mbd": 3.0,
     "risk_factors": ["weather", "vessel_size_limit"],
     "alternative_routes": ["turkish_straits"],
+    "lat": 55.87,
+    "lon": 12.70,
+    "coord_source": "approximate_manual",
     "notes": "Baltic Sea crude outlet; shallow draft limits VLCC passage"
   },
   {
@@ -67,6 +85,9 @@
     "baseline_flow_mbd": 4.5,
     "risk_factors": ["weather", "long_voyage_cost"],
     "alternative_routes": ["suez_canal"],
+    "lat": -34.36,
+    "lon": 18.47,
+    "coord_source": "approximate_manual",
     "notes": "Primary diversion route when Suez/Bab el-Mandeb disrupted"
   },
   {
@@ -77,6 +98,9 @@
     "baseline_flow_mbd": 0.9,
     "risk_factors": ["drought", "vessel_size_limit"],
     "alternative_routes": ["cape_horn"],
+    "lat": 9.08,
+    "lon": -79.68,
+    "coord_source": "approximate_manual",
     "notes": "Low oil volume but critical for LNG and refined products"
   }
 ]
