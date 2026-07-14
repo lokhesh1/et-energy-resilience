@@ -1,0 +1,6 @@
+{
+  "_note": "ILLUSTRATIVE SPR parameters — hand-seeded, NOT calibrated (same status as dsm_params.json / refineries.json, see CLAUDE.md). The only real anchor is ISPRL Phase I capacity: Visakhapatnam 1.33 + Mangalore 1.5 + Padur 2.5 = 5.33 MMT of crude, roughly 39 million barrels. fill_fraction (how full the caverns actually are) and max_drawdown_mbd (the sustainable withdrawal rate the cavern/pipeline infrastructure supports) are plausible hand-seeded values — calibrate from ISPRL / PPAC before treating days-of-cover as real. Units: reserves in million barrels (mmbbl), rates in million barrels/day (mbd), so days-of-cover = mmbbl / mbd directly.",
+  "strategic_reserve_mmbbl": 39.0,
+  "fill_fraction": 0.9,
+  "max_drawdown_mbd": 1.0
+}

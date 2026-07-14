@@ -34,6 +34,7 @@ from eib_guardrails.principal_hierarchy import check_permission
 from eib_guardrails.audit_logger import verify_chain
 from api import twin_loop as tl
 from api.summary import summarize_final
+from api.chat import router as chat_router
 
 
 # ── Request models ───────────────────────────────────────────────────────────────
@@ -97,6 +98,7 @@ app = FastAPI(
 # A2A front door: discovery (/.well-known/agent.json, /a2a/card, /a2a/agents) +
 # invocation (/a2a/tasks/send). Lets an external agent discover and call the board.
 app.include_router(a2a_router)
+app.include_router(chat_router)
 
 
 # ── Endpoints ────────────────────────────────────────────────────────────────────
