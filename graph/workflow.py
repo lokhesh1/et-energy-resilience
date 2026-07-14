@@ -34,6 +34,7 @@ from agents.procurement.americas_agent import americas_node
 from agents.procurement.spot_market_agent import spot_market_node
 from agents.procurement.bid_evaluator import bid_evaluator_node
 from agents.distiller.pod import learn_async
+from eib_guardrails.audit_logger import log_run
 
 try:  # real coordinator once it lands; placeholder keeps the graph runnable now
     from agents.crisis_coordinator import coordinator_node
@@ -132,12 +133,17 @@ def run_board_with_learning(
     if `learn` is set, the distiller pod is fired on a daemon thread (`learn_async`)
     so distillation/consolidation never delay the answer. This is the seam
     `api/main.py` calls — reads are cheap, learning happens on its own clock.
+
+    The run's audit_trail is also flushed to the durable hash-chained audit log
+    here (best-effort, returns a status — a broken audit DB never blocks the
+    answer). This seam sees every board run: /query, /scenario, and A2A.
     """
     graph = build_graph(checkpointer=checkpointer)
     final = graph.invoke(
         initial_state(query, scenario_params),
         config={"configurable": {"thread_id": thread_id}},
     )
+    log_run(final)
     if learn:
         learn_async(final, consolidate=consolidate)
     return final

@@ -5,6 +5,7 @@ venv/
 .env
 .vscode/
 *.log
+data/audit_log.db
 
 **/CLAUDE.md
 

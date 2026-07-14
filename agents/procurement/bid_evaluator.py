@@ -25,8 +25,9 @@ supply has been marshalled against the gap. Fully deterministic — no LLM.
 
 Scoring weights live in data/procurement_params.json (illustrative until calibrated,
 same status as dsm_params.json); a baked-in fallback keeps the node running if the
-file is missing. Urgency ties to SCTD status bands now, and to spr_calculator.py once
-it exists (backlog).
+file is missing. Urgency ties to SCTD status bands + SPR days-of-cover: a gap the
+strategic reserve could bridge for months is calmer than one that would drain it in
+a week, even at the same refinery-status severity.
 """
 import json
 from datetime import datetime, timezone
@@ -34,6 +35,7 @@ from pathlib import Path
 
 from graph.eib_state import EnergyIntelligenceBoard, StigmergyMarker
 from eib_guardrails.constitution_checker import check as constitution_check
+from tools.spr_calculator import days_of_cover as spr_days_of_cover
 
 _PARAMS_PATH = Path(__file__).parent.parent.parent / "data" / "procurement_params.json"
 
@@ -45,6 +47,8 @@ _DEFAULT_PARAMS = {
         "urgency_extra_per_bbl_per_day": 2.0,
         "critical_refinery_weight": 0.5,
         "stressed_refinery_weight": 0.15,
+        "spr_weight": 0.6,
+        "spr_comfort_days": 30.0,
         "max_urgency": 1.0,
     },
 }
@@ -80,14 +84,34 @@ def _disrupted_corridors(state: EnergyIntelligenceBoard) -> set[str]:
     }
 
 
+def _spr_pressure(gap_mbd: float) -> float:
+    """Extra urgency in [0, 1] from strategic-reserve cover. If the SPR could
+    bridge the whole gap for `spr_comfort_days` or more, pressure is 0; as
+    days-of-cover shrinks below that horizon, pressure rises linearly toward 1.
+    Best-effort — no SPR signal (no gap / tool failure) means no extra pressure."""
+    try:
+        days = spr_days_of_cover(gap_mbd)
+    except Exception:
+        return 0.0
+    if days is None:
+        return 0.0
+    comfort = float(_DELAY.get("spr_comfort_days", 30.0))
+    if comfort <= 0:
+        return 0.0
+    return max(0.0, 1.0 - days / comfort)
+
+
 def _urgency(twin: dict) -> float:
-    """Shortfall severity in [0, 1] from SCTD's status bands. A critical refinery
-    weighs more than a stressed one; urgency 0 means a relaxed shortfall (cheapest
-    cargo wins), urgency 1 means every open day is very expensive (speed wins)."""
+    """Shortfall severity in [0, 1]: SCTD's status bands (a critical refinery
+    weighs more than a stressed one) plus SPR pressure (thin days-of-cover on the
+    gap). Urgency 0 means a relaxed shortfall (cheapest cargo wins), urgency 1
+    means every open day is very expensive (speed wins)."""
     critical = int(twin.get("critical_count", 0) or 0)
     stressed = int(twin.get("stressed_count", 0) or 0)
+    gap = float(twin.get("total_india_shortfall_mbd", 0.0) or 0.0)
     raw = (critical * float(_DELAY["critical_refinery_weight"])
-           + stressed * float(_DELAY["stressed_refinery_weight"]))
+           + stressed * float(_DELAY["stressed_refinery_weight"])
+           + float(_DELAY.get("spr_weight", 0.6)) * _spr_pressure(gap))
     return round(min(float(_DELAY["max_urgency"]), max(0.0, raw)), 4)
 
 

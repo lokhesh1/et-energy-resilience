@@ -36,6 +36,7 @@ from config.settings import OPENROUTER_API_KEY, OPENROUTER_BASE_URL, COORDINATOR
 from graph.eib_state import EnergyIntelligenceBoard
 from eib_guardrails.constitution_checker import check as constitution_check
 from memory.xmemory import XMemory
+from tools.spr_calculator import calculate_drawdown
 
 _client = OpenAI(api_key=OPENROUTER_API_KEY, base_url=OPENROUTER_BASE_URL)
 
@@ -119,16 +120,49 @@ def _committed_actions(mix: dict) -> list[dict]:
     return actions
 
 
+def _spr_bridge(residual: float, scenarios: list[dict]) -> dict | None:
+    """Size an SPR drawdown against the residual gap the market mix leaves open
+    (best-effort — None on any failure, the plan just omits the bridge). The
+    longest active scenario duration, if any, bounds `covers_duration`."""
+    if residual <= _TOL:
+        return None
+    try:
+        duration = max((float(s.get("duration_days") or 0) for s in scenarios),
+                       default=0.0) or None
+        spr = calculate_drawdown(residual, duration_days=duration)
+        d = spr.get("data", {})
+        return {
+            "drawdown_mbd":    d.get("drawdown_mbd"),
+            "days_of_cover":   d.get("days_of_cover"),
+            "bridge_fraction": d.get("bridge_fraction"),
+            "unbridged_mbd":   d.get("unbridged_mbd"),
+            "duration_days":   d.get("duration_days"),
+            "covers_duration": d.get("covers_duration"),
+            "adequacy":        d.get("adequacy"),
+        }
+    except Exception:
+        return None
+
+
 def _priority_actions(escalation: str, residual: float, actions: list[dict],
-                      disrupted: list[str], block_flags: list[dict]) -> list[str]:
+                      disrupted: list[str], block_flags: list[dict],
+                      spr_bridge: dict | None = None) -> list[str]:
     """Human-readable next steps, deterministic from the plan. Ordered by urgency:
     the uncovered gap first, then the cargoes to secure, then what to watch."""
     out: list[str] = []
     if residual > _TOL:
-        out.append(
+        msg = (
             f"UNCOVERED: {round(residual, 3)} mbd of the shortfall is not met by "
             f"market bids — escalate for SPR drawdown / demand curtailment."
         )
+        if spr_bridge and spr_bridge.get("days_of_cover"):
+            msg += (f" SPR can bridge {spr_bridge['drawdown_mbd']} mbd for "
+                    f"~{spr_bridge['days_of_cover']} days")
+            if spr_bridge.get("adequacy") == "partial_bridge":
+                msg += (f" ({spr_bridge['unbridged_mbd']} mbd exceeds the max "
+                        f"drawdown rate — curtailment still required)")
+            msg += "."
+        out.append(msg)
     for a in actions:
         out.append(
             f"Secure {a['volume_mbd']} mbd {a.get('grade') or 'crude'} from "
@@ -185,6 +219,7 @@ def _build_response_plan(state: EnergyIntelligenceBoard,
         int(twin.get("critical_count", 0) or 0),
         int(twin.get("stressed_count", 0) or 0),
     )
+    spr_bridge = _spr_bridge(residual, state.get("scenarios", []) or [])
 
     unresolved = [f"{f['agent']}/{f['rule_id']}: {f['message']}" for f in block_flags]
     if residual > _TOL:
@@ -207,9 +242,10 @@ def _build_response_plan(state: EnergyIntelligenceBoard,
             "residual_gap_mbd":  residual,
             "committed_actions": actions,
             "est_daily_cost_usd": mix.get("est_daily_cost_usd"),
+            "spr_bridge":        spr_bridge,
         },
         "priority_actions": _priority_actions(escalation, residual, actions,
-                                              disrupted, block_flags),
+                                              disrupted, block_flags, spr_bridge),
         "unresolved_issues": unresolved,
         "generated_at": now,
     }
@@ -238,6 +274,10 @@ def _template_recommendation(plan: dict) -> str:
         tail = (f"Market bids cover {proc['covered_mbd']} mbd; "
                 f"{proc['residual_gap_mbd']} mbd remains UNCOVERED — escalate for "
                 f"strategic reserve / demand-side measures.")
+        bridge = proc.get("spr_bridge")
+        if bridge and bridge.get("days_of_cover"):
+            tail += (f" SPR can bridge {bridge['drawdown_mbd']} mbd for "
+                     f"~{bridge['days_of_cover']} days.")
     else:
         tail = (f"Procurement secures {proc['covered_mbd']} mbd "
                 f"({len(proc['committed_actions'])} cargo(es)), closing the gap.")

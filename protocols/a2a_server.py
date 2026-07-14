@@ -33,6 +33,7 @@ from pydantic import BaseModel, Field
 
 from graph.workflow import run_board_with_learning
 from protocols.agent_cards import board_card, agent_cards
+from eib_guardrails.principal_hierarchy import check_permission
 
 
 router = APIRouter(tags=["a2a"])
@@ -161,6 +162,13 @@ def tasks_send(req: TaskSendRequest) -> dict:
     failure comes back as a `failed` task, not an HTTP 500."""
     task_id = req.id or str(uuid.uuid4())
     text = _extract_text(req)
+
+    # Principal-hierarchy gate: everything at this endpoint is an external agent.
+    # A denial is a `failed` Task, same stable surface as a board failure.
+    perm = check_permission("external_agent", "run_board")
+    if not perm["allowed"]:
+        return _failed_task(task_id, text, f"permission denied: {perm['reason']}")
+
     try:
         final = run_board_with_learning(
             text, scenario_params=req.scenario_params or None, learn=req.learn,

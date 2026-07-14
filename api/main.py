@@ -23,14 +23,17 @@ from __future__ import annotations
 import asyncio
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
 from config import settings
 from graph.workflow import run_board_with_learning
 from tools.corridor_status import get_corridor_status
 from protocols.a2a_server import router as a2a_router
+from eib_guardrails.principal_hierarchy import check_permission
+from eib_guardrails.audit_logger import verify_chain
 from api import twin_loop as tl
+from api.summary import summarize_final
 
 
 # ── Request models ───────────────────────────────────────────────────────────────
@@ -63,27 +66,7 @@ _AGENTS = [
 ]
 
 
-def _summarize(final: dict) -> dict:
-    """Curate the big final board state into a useful response. Drops the raw
-    audit_trail and keeps the decision-relevant fields; the twin snapshot (with
-    geojson for the map) is served separately by GET /twin."""
-    plan = final.get("response_plan", {}) or {}
-    twin = final.get("twin_state", {}) or {}
-    return {
-        "query":                final.get("query", ""),
-        "escalation_level":     plan.get("escalation_level"),
-        "final_recommendation": final.get("final_recommendation", ""),
-        "response_plan":        plan,
-        "corridor_risk":        final.get("corridor_risk", {}),
-        "twin_summary": {
-            "total_india_shortfall_mbd": twin.get("total_india_shortfall_mbd"),
-            "critical_count":            twin.get("critical_count"),
-            "stressed_count":            twin.get("stressed_count"),
-        },
-        "recommended_mix":     final.get("recommended_mix", {}),
-        "retrieved_memories":  final.get("retrieved_memories", []),
-        "constitution_flags":  final.get("constitution_flags", []),
-    }
+_summarize = summarize_final
 
 
 # ── Lifespan: run the continuous twin loop for the life of the app ───────────────
@@ -163,5 +146,24 @@ def twin() -> dict:
 
 @app.post("/twin/refresh")
 def twin_refresh() -> dict:
-    """Force an immediate twin refresh (useful for demos / a cold start)."""
+    """Force an immediate twin refresh (useful for demos / a cold start).
+
+    Principal-hierarchy gate: forcing the compute clock is an operator capability
+    (the REST surface has no auth yet, so REST = operator by construction; the
+    check makes the boundary explicit and testable)."""
+    perm = check_permission("operator", "refresh_twin")
+    if not perm["allowed"]:
+        raise HTTPException(status_code=403, detail=perm["reason"])
     return tl.refresh_twin()
+
+
+@app.get("/audit/verify")
+def audit_verify() -> dict:
+    """Verify the hash-chained audit log end-to-end.
+
+    Principal-hierarchy gate: reading the audit trail is an operator capability
+    (same pattern as /twin/refresh — the REST surface = operator by construction)."""
+    perm = check_permission("operator", "read_audit")
+    if not perm["allowed"]:
+        raise HTTPException(status_code=403, detail=perm["reason"])
+    return verify_chain()
