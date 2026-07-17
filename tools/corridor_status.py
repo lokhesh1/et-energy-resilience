@@ -4,8 +4,12 @@ from pathlib import Path
 
 CORRIDORS_PATH = Path(__file__).parent.parent / "data" / "corridors.json"
 
-# Static risk overrides — updated manually or by GRI agent via stigmergy
+# Manual incident overrides (ops/testing hook via apply_incident/clear_incident).
 # Format: corridor_id → {disruption_pct, status, last_incident}
+# NOTE: nothing in the automated pipeline writes this — corridor disruption is
+# driven by GRI risk scores → DSM scenarios, not this table. That is deliberate:
+# a hypothetical query ("what if Hormuz closes") must never mutate global
+# corridor state that the live twin would then serve as fact.
 _ACTIVE_INCIDENTS: dict[str, dict] = {}
 
 
@@ -100,7 +104,8 @@ def get_corridor_status(corridor_overrides: dict[str, dict] | None = None) -> di
 
 
 def apply_incident(corridor_id: str, disruption_pct: float, last_incident: str) -> None:
-    """Called by GRI agent to inject a live incident into corridor state."""
+    """Manual/ops hook to inject an incident override. NOT called by the
+    automated pipeline (see _ACTIVE_INCIDENTS note)."""
     _ACTIVE_INCIDENTS[corridor_id] = {
         "disruption_pct": disruption_pct,
         "last_incident":  last_incident,

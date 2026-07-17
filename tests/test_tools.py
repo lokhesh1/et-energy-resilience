@@ -519,3 +519,45 @@ def test_fetch_gdelt_empty_articles_returns_empty_list():
     client = _make_client(gdelt_json={"articles": []})
     articles = asyncio.run(_fetch_gdelt(client, "hormuz"))
     assert articles == []
+
+
+# ── build_search_query ────────────────────────────────────────────────────────
+# The user's question ROUTES; it must never FETCH — the search string is always
+# built from the fixed corridor vocabulary, never from the raw user text.
+
+from tools.news_fetcher import build_search_query, _DEFAULT_SEARCH_QUERY
+
+
+def test_search_query_named_corridor():
+    q = build_search_query("Iran closes the Strait of Hormuz")
+    assert '"Hormuz"' in q
+    # raw user words never leak into the search string
+    assert "closes" not in q
+
+
+def test_search_query_actor_hint_maps_to_corridor():
+    assert '"Red Sea"' in build_search_query("houthi attacks on shipping")
+    assert '"Hormuz"' in build_search_query("iran military escalation")
+
+
+def test_search_query_status_question_gets_default_sweep():
+    q = build_search_query("what is the status of corridors and supplies to india")
+    assert q == _DEFAULT_SEARCH_QUERY
+    assert '"Strait of Hormuz"' in q  # the broad sweep covers key chokepoints
+
+
+def test_search_query_twin_loop_sentence_gets_default_sweep():
+    q = build_search_query(
+        "continuous background twin refresh — current corridor monitoring")
+    assert q == _DEFAULT_SEARCH_QUERY
+
+
+def test_search_query_multiple_corridors_parenthesized_or():
+    q = build_search_query("Hormuz is closed AND Suez Canal is disrupted")
+    assert q.startswith("(") and q.endswith(")")
+    assert '"Hormuz"' in q and '"Suez"' in q and " OR " in q
+
+
+def test_search_query_empty_query_never_blank():
+    assert build_search_query("") == _DEFAULT_SEARCH_QUERY
+    assert build_search_query(None) == _DEFAULT_SEARCH_QUERY

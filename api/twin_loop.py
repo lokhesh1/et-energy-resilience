@@ -32,6 +32,10 @@ from graph.workflow import build_twin_graph, initial_state
 
 # The generic monitoring prompt the twin runs under — it is NOT answering a user, it
 # is reading the world (live corridor news) and reprojecting the physical twin.
+# NOTE: this sentence is a label, not a search string — GRI derives the actual news
+# search from a fixed corridor vocabulary (tools.news_fetcher.build_search_query);
+# a query naming no corridor triggers the broad all-chokepoints monitoring sweep,
+# which is exactly what the twin wants.
 _TWIN_QUERY = "continuous background twin refresh — current corridor monitoring"
 
 

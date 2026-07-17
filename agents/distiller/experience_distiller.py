@@ -101,6 +101,19 @@ def build_trajectory(state: EnergyIntelligenceBoard) -> dict:
     } for s in scenarios[:_MAX_ITEMS]]
 
     refineries = twin.get("refineries", []) or []
+
+    # Reroutes are follow-up gold ("what are the reroute options?") — carry them
+    # compactly. Corridor-level by nature: reroutes belong to corridors, not to
+    # individual refineries.
+    routes = [{
+        "from_corridor":      r.get("from_corridor"),
+        "to_corridor":        r.get("to_corridor"),
+        "added_transit_days": r.get("added_transit_days"),
+        "freight_cost_mult":  r.get("freight_cost_mult"),
+        "volume_mbd":         r.get("volume_mbd"),
+        "overloaded":         r.get("overloaded"),
+    } for r in (twin.get("routes", []) or [])[:_MAX_ITEMS]]
+
     cargoes = [{
         "supplier":          c.get("supplier"),
         "region":            c.get("region"),
@@ -119,10 +132,17 @@ def build_trajectory(state: EnergyIntelligenceBoard) -> dict:
             "gap_mbd":             round(float(twin.get("total_india_shortfall_mbd", 0.0) or 0.0), 4),
             "critical_count":      twin.get("critical_count", 0),
             "stressed_count":      twin.get("stressed_count", 0),
+            # NOT capped: bounded by the physical refineries file (12), and a
+            # truncated list makes follow-up answers contradict the board's count.
+            # Stressed names carried too — a tension run can have 12 stressed and
+            # 0 critical, and "which refineries?" must still be answerable.
             "critical_refineries": [r.get("name") for r in refineries
-                                    if r.get("status") == "critical"][:_MAX_ITEMS],
+                                    if r.get("status") == "critical"],
+            "stressed_refineries": [r.get("name") for r in refineries
+                                    if r.get("status") == "stressed"],
             "disrupted_corridors": [c.get("id") for c in (twin.get("corridors", []) or [])
                                     if float(c.get("disruption_fraction", 0.0) or 0.0) > 0.0],
+            "reroutes":            routes,
         },
         "procurement": {
             "covered_mbd":      mix.get("total_volume_mbd"),

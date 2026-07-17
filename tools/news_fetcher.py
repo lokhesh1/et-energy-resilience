@@ -17,6 +17,63 @@ GDELT_PARAMS = {
     "sort":       "datedesc",
 }
 
+# ── Search-query builder ────────────────────────────────────────────────────────
+# The user's question ROUTES; it must never FETCH. A conversational sentence
+# ("what is the status of corridors and supplies to india") passed as the search
+# string returns zero relevant articles — NewsData full-text-matches the words and
+# GDELT ANDs them — so GRI scores every corridor at baseline and the board reports
+# "routine" no matter what is happening in the world. Searches are therefore built
+# from a fixed corridor vocabulary; the user's phrasing only narrows WHICH
+# corridors to search, never supplies the search terms itself.
+
+# corridor_id → (detection aliases matched against the lowercased user query,
+#                quoted search phrases sent to the news APIs)
+_CORRIDOR_SEARCH: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
+    "strait_of_hormuz":  (("hormuz", "persian gulf", "iran"),
+                          ('"Hormuz"',)),
+    "suez_canal":        (("suez", "egypt"),
+                          ('"Suez"',)),
+    "bab_el_mandeb":     (("bab el-mandeb", "bab_el_mandeb", "bab al-mandab",
+                           "red sea", "yemen", "houthi"),
+                          ('"Bab el-Mandeb"', '"Red Sea"')),
+    "malacca_strait":    (("malacca",),
+                          ('"Malacca"',)),
+    "turkish_straits":   (("turkish strait", "turkish_straits", "bosphorus",
+                           "bosporus"),
+                          ('"Bosphorus"', '"Turkish Straits"')),
+    "danish_straits":    (("danish strait", "danish_straits"),
+                          ('"Danish Straits"',)),
+    "cape_of_good_hope": (("cape of good hope", "cape_of_good_hope"),
+                          ('"Cape of Good Hope"',)),
+    "panama_canal":      (("panama",),
+                          ('"Panama Canal"',)),
+}
+
+# Broad monitoring sweep when the query names no corridor (status questions, the
+# background twin loop). Kept under ~100 chars so NewsData never rejects it; the
+# OR group is parenthesized because GDELT requires OR'd statements in parens.
+_DEFAULT_SEARCH_QUERY = ('("Strait of Hormuz" OR "Suez Canal" OR "Red Sea" '
+                         'OR "oil tanker" OR "crude oil")')
+
+
+def build_search_query(user_query: str) -> str:
+    """Turn a conversational query into a corridor-keyword news search.
+
+    Corridors named (or hinted at — 'iran', 'houthi', …) in the query are searched
+    specifically; a query naming none gets the broad energy-chokepoint sweep. The
+    raw user text is never used as a search term.
+    """
+    q = (user_query or "").lower()
+    phrases: list[str] = []
+    for aliases, search in _CORRIDOR_SEARCH.values():
+        if any(a in q for a in aliases):
+            phrases.extend(p for p in search if p not in phrases)
+    if not phrases:
+        return _DEFAULT_SEARCH_QUERY
+    if len(phrases) == 1:
+        return phrases[0]
+    return "(" + " OR ".join(phrases) + ")"
+
 
 async def _fetch_newsapi(client: httpx.AsyncClient, query: str, api_key: str) -> list[dict]:
     params = {

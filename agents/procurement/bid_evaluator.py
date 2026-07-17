@@ -10,15 +10,23 @@ bidders may not, or concurrent writes would clobber (LangGraph InvalidUpdateErro
 
 Selection ranks bids on lowest TOTAL ECONOMIC IMPACT, not lowest sticker price:
   1. Independently re-screen every bid via the procurement constitution (never trust
-     the flags a bidder attached). Sanctioned bids are EXCLUDED from the mix outright.
+     the flags a bidder attached). Sanctioned bids are EXCLUDED from the mix outright,
+     and so are bids delivering through an effectively-CLOSED corridor (twin
+     disruption fraction >= 0.75) — volume that cannot physically arrive must never
+     count as coverage. A degraded-but-passable corridor costs a $ penalty instead.
   2. Score each eligible bid = price/bbl + penalties (grade no affected refinery can
-     run, routing through the disrupted corridor) + a COST-OF-DELAY term:
-     transit_days × impact_per_day, where impact_per_day scales with how urgent the
-     shortfall is (SCTD's critical/stressed refinery counts). A mild shortfall keeps
+     run) + a DELIVERY-RISK uplift (price × f/(1−f), f = the delivery corridor's twin
+     disruption fraction — expected cost per DELIVERED barrel; flat penalty only as
+     fallback when f is unknown) + a COST-OF-DELAY term: transit_days ×
+     impact_per_day, where impact_per_day scales with how urgent the shortfall is
+     (SCTD's critical/stressed refinery counts). A mild shortfall keeps
      impact_per_day small so the cheapest cargo wins; a critical one makes every extra
      day expensive, so a faster-but-pricier cargo can win.
-  3. Greedily fill the gap lowest-impact-first, trimming the last cargo so the mix
-     total lands on the gap (coverage ~1.0x, inside the constitution's 0.8x–1.3x band).
+  3. Greedily fill the gap lowest-impact-first on RISK-DISCOUNTED volume: a cargo
+     through a fraction-f corridor counts as volume×(1−f) toward the gap, so the mix
+     buys nominally more when risky cargo is involved (nominal capped at the 1.3x
+     band edge — PROC-06). The mix reports both totals; an effective shortfall
+     surfaces as residual at the coordinator instead of fake 1.0x coverage.
 
 Then deposit a 'bid' pheromone per committed cargo so the rest of the board sees
 supply has been marshalled against the gap. Fully deterministic — no LLM.
@@ -46,7 +54,7 @@ _DEFAULT_PARAMS = {
         "base_per_bbl_per_day": 0.15,
         "urgency_extra_per_bbl_per_day": 2.0,
         "critical_refinery_weight": 0.5,
-        "stressed_refinery_weight": 0.15,
+        "stressed_refinery_weight": 0.06,
         "spr_weight": 0.6,
         "spr_comfort_days": 30.0,
         "max_urgency": 1.0,
@@ -74,11 +82,42 @@ _DELAY = _PARAMS.get("delay_cost", _DEFAULT_PARAMS["delay_cost"])
 _COVERAGE_MIN = 0.8
 _COVERAGE_MAX = 1.3
 
+# A delivery corridor at/above this disruption fraction is effectively CLOSED
+# (mirrors corridor_status's "closed" band at 75%): cargo routed through it
+# cannot escape the disruption it is meant to relieve, so such bids are
+# EXCLUDED from the mix outright — not just penalized. Below the threshold the
+# corridor is degraded-but-passable and the $ route penalty applies instead.
+_CLOSED_CORRIDOR_FRACTION = 0.75
+
 
 def _disrupted_corridors(state: EnergyIntelligenceBoard) -> set[str]:
     twin = state.get("twin_state", {}) or {}
     return {
         c.get("id")
+        for c in (twin.get("corridors", []) or [])
+        if float(c.get("disruption_fraction", 0.0) or 0.0) > 0.0
+    }
+
+
+def _closed_corridors(state: EnergyIntelligenceBoard) -> set[str]:
+    """Corridors the twin marks as effectively closed — derived from state, never
+    from bidder-attached flags (same never-trust discipline as the constitution)."""
+    twin = state.get("twin_state", {}) or {}
+    return {
+        c.get("id")
+        for c in (twin.get("corridors", []) or [])
+        if float(c.get("disruption_fraction", 0.0) or 0.0) >= _CLOSED_CORRIDOR_FRACTION
+    }
+
+
+def _corridor_fractions(state: EnergyIntelligenceBoard) -> dict[str, float]:
+    """corridor_id → twin disruption fraction. The SAME number DSM used to size
+    the shortfall must price the relief cargo that transits that corridor —
+    otherwise the board asserts '30% of Hormuz flow is at risk' while counting
+    Hormuz-transiting relief volume at 100% face value."""
+    twin = state.get("twin_state", {}) or {}
+    return {
+        c.get("id"): float(c.get("disruption_fraction", 0.0) or 0.0)
         for c in (twin.get("corridors", []) or [])
         if float(c.get("disruption_fraction", 0.0) or 0.0) > 0.0
     }
@@ -124,20 +163,35 @@ def _impact_per_day(urgency: float) -> float:
 def _score(bid: dict, impact_per_day: float) -> float:
     """Lower is better. Total economic impact per bbl: landed price, plus penalties
     for an unusable grade / self-defeating route, plus the cost of delay
-    (transit_days × impact_per_day — the urgency-scaled cost-of-waiting term)."""
-    score = float(bid.get("price_per_bbl", 0.0))
+    (transit_days × impact_per_day — the urgency-scaled cost-of-waiting term).
+
+    Delivery risk is priced by expectation, not a flat fee: with fraction f of
+    the delivery corridor choked, only (1−f) of the cargo is expected to arrive,
+    so the cost per DELIVERED barrel is price/(1−f) — an uplift of price·f/(1−f)
+    that scales with how disrupted the corridor actually is. The flat
+    `disrupted_route_penalty_usd` remains only as the fallback when the fraction
+    is unknown (bidder flag without twin data)."""
+    price = float(bid.get("price_per_bbl", 0.0))
+    score = price
     if bid.get("grade_compatible") is False:      # None (unknown) is not penalised
         score += _GRADE_MISMATCH_PENALTY
-    if bid.get("routes_through_disrupted"):
+    fraction = float(bid.get("delivery_risk_fraction", 0.0) or 0.0)
+    if 0.0 < fraction < 1.0:
+        score += price * fraction / (1.0 - fraction)
+    elif bid.get("routes_through_disrupted"):
         score += _DISRUPTED_ROUTE_PENALTY
     score += float(bid.get("transit_days_to_india", 0) or 0) * impact_per_day
     return round(score, 4)
 
 
-def _eligible(bid: dict) -> tuple[bool, str | None]:
-    """Can this bid enter the mix? Sanctioned or zero-volume bids cannot."""
+def _eligible(bid: dict, closed: set[str] = frozenset()) -> tuple[bool, str | None]:
+    """Can this bid enter the mix? Sanctioned, zero-volume, or routed through an
+    effectively-closed corridor — cannot. (Closed-corridor cargo would inflate
+    coverage with volume that physically cannot arrive.)"""
     if bid.get("sanctions_status") == "blocked":
         return False, "sanctioned"
+    if bid.get("delivery_corridor") in closed:
+        return False, "delivery_corridor_closed"
     try:
         if float(bid.get("volume_mbd", 0.0)) <= 0:
             return False, "non_positive_volume"
@@ -146,27 +200,53 @@ def _eligible(bid: dict) -> tuple[bool, str | None]:
     return True, None
 
 
-def _compose_mix(ranked: list[dict], gap: float) -> tuple[list[dict], float]:
-    """Greedy cheapest-first fill. Returns (components, total_volume). The last
-    cargo is trimmed so the running total lands on the gap — keeping coverage near
-    1.0x and the mix total exactly equal to the sum of its components (PROC-07)."""
+def _compose_mix(ranked: list[dict], gap: float,
+                 fractions: dict[str, float] | None = None,
+                 ) -> tuple[list[dict], float, float]:
+    """Greedy cheapest-first fill on RISK-DISCOUNTED volume. Returns
+    (components, total_nominal, total_effective).
+
+    A cargo through a corridor with disruption fraction f is expected to deliver
+    only (1−f) of what was bought, so the fill targets EFFECTIVE volume landing
+    on the gap — buying nominally more when risky cargo is in the mix ("buy extra
+    because some won't arrive"). Nominal total is capped at the PROC-06 band edge
+    (_COVERAGE_MAX × gap); if effective coverage still falls short, the shortfall
+    surfaces as residual at the coordinator instead of being papered over.
+
+    PROC-07 invariant preserved: total_volume_mbd == sum of component volume_mbd
+    (both nominal). Every component carries its delivery_risk_fraction and
+    effective_volume_mbd so downstream consumers see both numbers."""
+    fractions = fractions or {}
     components: list[dict] = []
-    total = 0.0
+    total_nominal = 0.0
+    total_effective = 0.0
+    nominal_cap = round(_COVERAGE_MAX * gap, 6)
     for bid in ranked:
         if not bid.get("_eligible"):
             continue
-        need = round(gap - total, 6)
-        if need <= 0:
+        need_effective = round(gap - total_effective, 6)
+        if need_effective <= 0:
             break
-        take = round(min(float(bid["volume_mbd"]), need), 4)
+        fraction = float(fractions.get(bid.get("delivery_corridor"), 0.0))
+        survival = 1.0 - fraction
+        if survival <= 0:            # fully closed — the eligibility gate owns this
+            continue
+        take = round(min(float(bid["volume_mbd"]),
+                         need_effective / survival,
+                         nominal_cap - total_nominal), 4)
         if take <= 0:
             continue
-        component = {**bid, "volume_mbd": take}
+        effective = round(take * survival, 4)
+        component = {**bid,
+                     "volume_mbd": take,
+                     "delivery_risk_fraction": round(fraction, 3),
+                     "effective_volume_mbd": effective}
         component.pop("_eligible", None)
         component.pop("_exclude_reason", None)
         components.append(component)
-        total = round(total + take, 4)
-    return components, total
+        total_nominal = round(total_nominal + take, 4)
+        total_effective = round(total_effective + effective, 4)
+    return components, total_nominal, total_effective
 
 
 def bid_evaluator_node(state: EnergyIntelligenceBoard) -> dict:
@@ -177,6 +257,8 @@ def bid_evaluator_node(state: EnergyIntelligenceBoard) -> dict:
     gap = float(twin.get("total_india_shortfall_mbd", 0.0) or 0.0)
     affected = state.get("affected_refineries", []) or []
     disrupted = _disrupted_corridors(state)
+    closed = _closed_corridors(state)
+    fractions = _corridor_fractions(state)
 
     # ── 0. Cost-of-delay: how expensive is each extra day the gap stays open? ──
     urgency = _urgency(twin)
@@ -185,10 +267,14 @@ def bid_evaluator_node(state: EnergyIntelligenceBoard) -> dict:
     # ── 1. Rank every bid (annotate eligibility + score; keep the full list) ──
     ranked: list[dict] = []
     for bid in bids:
-        ok, reason = _eligible(bid)
+        ok, reason = _eligible(bid, closed)
+        # Delivery risk from twin state (never the bidder's flag): the fraction
+        # prices the risk in the score and discounts the volume in the fill.
+        fraction = round(fractions.get(bid.get("delivery_corridor"), 0.0), 3)
+        annotated = {**bid, "delivery_risk_fraction": fraction}
         ranked.append({
-            **bid,
-            "score":          _score(bid, impact_per_day),
+            **annotated,
+            "score":          _score(annotated, impact_per_day),
             "_eligible":      ok,
             "_exclude_reason": reason,
         })
@@ -196,11 +282,12 @@ def bid_evaluator_node(state: EnergyIntelligenceBoard) -> dict:
 
     # ── 2. Compose the mix that covers the gap (cheapest eligible first) ──
     if gap > 0:
-        components, total = _compose_mix(ranked, gap)
+        components, total, total_effective = _compose_mix(ranked, gap, fractions)
     else:
-        components, total = [], 0.0
+        components, total, total_effective = [], 0.0, 0.0
 
     coverage_ratio = round(total / gap, 4) if gap > 0 else None
+    effective_coverage = round(total_effective / gap, 4) if gap > 0 else None
     est_daily_cost_usd = round(
         sum(float(c["volume_mbd"]) * 1e6 * float(c["price_per_bbl"]) for c in components)
     )
@@ -209,8 +296,13 @@ def bid_evaluator_node(state: EnergyIntelligenceBoard) -> dict:
     recommended_mix = {
         "gap_mbd":            round(gap, 4),
         "total_volume_mbd":   round(total, 4),
-        "coverage_ratio":     coverage_ratio,
-        "covers_gap":         gap <= 0 or (_COVERAGE_MIN <= (coverage_ratio or 0) <= _COVERAGE_MAX),
+        # Risk-discounted expected delivery: what actually counts against the gap.
+        "effective_volume_mbd": round(total_effective, 4),
+        "coverage_ratio":     coverage_ratio,          # nominal (PROC-06 band basis)
+        "effective_coverage_ratio": effective_coverage,
+        "covers_gap":         gap <= 0 or (
+            (_COVERAGE_MIN <= (coverage_ratio or 0) <= _COVERAGE_MAX)
+            and total_effective >= gap - 1e-3),  # 4dp-rounding headroom
         "components":         components,
         "est_daily_cost_usd": est_daily_cost_usd,
         "urgency":            urgency,           # shortfall severity that shaped the ranking
@@ -257,12 +349,16 @@ def bid_evaluator_node(state: EnergyIntelligenceBoard) -> dict:
         "bids_received":    len(bids),
         "eligible_bids":    sum(1 for b in ranked if b["_eligible"]),
         "excluded_bids":    sum(1 for b in ranked if not b["_eligible"]),
+        "closed_corridor_exclusions": sum(
+            1 for b in ranked if b["_exclude_reason"] == "delivery_corridor_closed"),
         "urgency":          urgency,
         "impact_per_day_usd": impact_per_day,
         "params_source":    "file" if _PARAMS_FROM_FILE else "defaults",
         "gap_mbd":          round(gap, 4),
         "mix_volume_mbd":   round(total, 4),
+        "mix_effective_mbd": round(total_effective, 4),
         "coverage_ratio":   coverage_ratio,
+        "effective_coverage_ratio": effective_coverage,
         "covers_gap":       recommended_mix["covers_gap"],
         "components":       len(components),
         "constitution_check": check_result,

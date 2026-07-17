@@ -113,7 +113,8 @@ def _severity(volume_mbd: float, duration_days: float) -> str:
     return "low"
 
 
-def _build_scenario(corridor: dict, score: float, event_type: str) -> dict:
+def _build_scenario(corridor: dict, score: float, event_type: str,
+                    duration_multiplier: float = 1.0) -> dict:
     cid = corridor["id"]
     baseline = float(corridor.get("baseline_flow_mbd", 0.0))
 
@@ -123,7 +124,8 @@ def _build_scenario(corridor: dict, score: float, event_type: str) -> dict:
     india_share = _PARAMS.get("india_import_share", {}).get(cid, _DEFAULT_INDIA_SHARE)
     india_exposure = round(volume * india_share, 3)
 
-    duration = _PARAMS.get("duration_days", {}).get(event_type, _DEFAULT_DURATION)
+    base_duration = _PARAMS.get("duration_days", {}).get(event_type, _DEFAULT_DURATION)
+    duration = round(base_duration * max(1.0, duration_multiplier))
 
     alt_routes = corridor.get("alternative_routes") or []
     reroute = None
@@ -222,6 +224,8 @@ def dsm_node(state: EnergyIntelligenceBoard) -> dict:
     corridor_risk   = state.get("corridor_risk", {}) or {}
     corridor_events = state.get("corridor_events", {}) or {}
     pheromone_field = state.get("pheromone_field", {}) or {}
+    scenario_params = state.get("scenario_params", {}) or {}
+    duration_mult = float(scenario_params.get("duration_multiplier", 1.0))
 
     # ── 1. Baselines (reuse the corridor tool GRI uses) ────────────────────
     corridor_result = get_corridor_status()
@@ -234,6 +238,7 @@ def dsm_node(state: EnergyIntelligenceBoard) -> dict:
         "corridor_status":  corridor_result["status"],
         "corridors_scored": len(corridor_risk),
         "params_source":    "file" if _PARAMS_FROM_FILE else "defaults",
+        "duration_multiplier": duration_mult,
         "timestamp":        now,
     }]
 
@@ -247,7 +252,10 @@ def dsm_node(state: EnergyIntelligenceBoard) -> dict:
         if effective < DSM_MODEL_THRESHOLD:
             continue
         event_type = corridor_events.get(cid, "none")
-        scenarios.append(_build_scenario(corridors_by_id[cid], effective, event_type))
+        scenarios.append(_build_scenario(
+            corridors_by_id[cid], effective, event_type,
+            duration_multiplier=duration_mult,
+        ))
 
     scenarios.sort(key=lambda s: s["volume_at_risk_mbd"], reverse=True)
 

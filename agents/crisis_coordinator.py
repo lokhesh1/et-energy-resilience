@@ -50,6 +50,11 @@ _TOL = 0.02
 # COORD-01 forbids a "routine" all-clear while a shortfall is still uncovered.
 ESCALATION_LEVELS = ("routine", "watch", "elevated", "critical")
 
+# Corridor risk at/above this reads "watch" even with zero projected shortfall:
+# real tension (GRI's 0.4–0.6 band) must never be reported as "routine / nominal".
+# Matches the band DSM's scenario threshold (0.5) only partially covers.
+_WATCH_RISK_THRESHOLD = 0.4
+
 
 # ── Deterministic plan assembly ─────────────────────────────────────────────────
 
@@ -87,16 +92,21 @@ def _collect_block_flags(state: EnergyIntelligenceBoard) -> list[dict]:
 
 
 def _escalation_level(gap: float, residual: float, covers_gap: bool,
-                      critical_count: int, stressed_count: int) -> str:
+                      critical_count: int, stressed_count: int,
+                      top_risk_score: float = 0.0) -> str:
     """Deterministic severity dial. An UNCOVERED shortfall is the worst case and
     always reads 'critical' — this is what makes COORD-01 (no all-clear over an
-    open gap) hold by construction."""
+    open gap) hold by construction. Elevated corridor risk with no projected
+    shortfall reads 'watch', never 'routine' — tension short of disruption is
+    still not an all-clear."""
     if residual > _TOL or (gap > 0 and not covers_gap):
         return "critical"
     if critical_count > 0:
         return "critical"
     if stressed_count > 0 or gap > 0:
         return "elevated"
+    if top_risk_score >= _WATCH_RISK_THRESHOLD:
+        return "watch"
     return "routine"
 
 
@@ -116,6 +126,12 @@ def _committed_actions(mix: dict) -> list[dict]:
             "delivery_corridor": c.get("delivery_corridor"),
             "transit_days":     c.get("transit_days_to_india"),
             "sanctions_status": c.get("sanctions_status", "clear"),
+            # Disclose transit risk: without these the narrative says "secure via
+            # strait_of_hormuz" and "monitor disruption on strait_of_hormuz" in the
+            # same plan with no acknowledgment they are the same corridor.
+            "delivery_risk_fraction": c.get("delivery_risk_fraction", 0.0),
+            "effective_volume_mbd":   c.get("effective_volume_mbd",
+                                            c.get("volume_mbd")),
         })
     return actions
 
@@ -146,7 +162,8 @@ def _spr_bridge(residual: float, scenarios: list[dict]) -> dict | None:
 
 def _priority_actions(escalation: str, residual: float, actions: list[dict],
                       disrupted: list[str], block_flags: list[dict],
-                      spr_bridge: dict | None = None) -> list[str]:
+                      spr_bridge: dict | None = None,
+                      watch_risks: list[dict] | None = None) -> list[str]:
     """Human-readable next steps, deterministic from the plan. Ordered by urgency:
     the uncovered gap first, then the cargoes to secure, then what to watch."""
     out: list[str] = []
@@ -164,19 +181,33 @@ def _priority_actions(escalation: str, residual: float, actions: list[dict],
             msg += "."
         out.append(msg)
     for a in actions:
-        out.append(
+        line = (
             f"Secure {a['volume_mbd']} mbd {a.get('grade') or 'crude'} from "
             f"{a['supplier']} ({a.get('region')}) via {a.get('delivery_corridor')} "
             f"at ${a['price_per_bbl']}/bbl."
         )
+        fraction = float(a.get("delivery_risk_fraction", 0.0) or 0.0)
+        if fraction > 0:
+            line += (f" CAUTION: corridor {round(fraction * 100)}% disrupted — "
+                     f"expected delivery {a.get('effective_volume_mbd')} mbd, "
+                     f"risk priced into the ranking.")
+        out.append(line)
     if disrupted:
         out.append(f"Monitor active disruption on: {', '.join(sorted(disrupted))}.")
-    if block_flags:
+    if block_flags and escalation != "routine":
         out.append(
             f"Resolve {len(block_flags)} upstream integrity flag(s) before execution."
         )
     if not out:
-        out.append("No action required — no shortfall projected.")
+        if watch_risks:
+            info = ", ".join(
+                f"{r['corridor']} ({r['event_type']}, {r['score']:.2f})"
+                for r in watch_risks
+            )
+            out.append(f"No procurement action required — no shortfall projected. "
+                       f"Monitor elevated corridor risk: {info}.")
+        else:
+            out.append("No action required — no shortfall projected.")
     return out
 
 
@@ -190,7 +221,11 @@ def _build_response_plan(state: EnergyIntelligenceBoard,
     corridor_events = state.get("corridor_events", {}) or {}
 
     gap = round(float(twin.get("total_india_shortfall_mbd", 0.0) or 0.0), 4)
-    covered = round(float(mix.get("total_volume_mbd", 0.0) or 0.0), 4)
+    # Coverage counts EXPECTED delivery (risk-discounted), not barrels bought: a
+    # cargo through a 30%-choked corridor covers only 70% of its volume. Falls
+    # back to the nominal total for mixes that predate the effective field.
+    covered = round(float(
+        mix.get("effective_volume_mbd", mix.get("total_volume_mbd", 0.0)) or 0.0), 4)
     residual = round(max(0.0, gap - covered), 4)
     covers_gap = bool(mix.get("covers_gap", gap <= 0))
 
@@ -214,10 +249,12 @@ def _build_response_plan(state: EnergyIntelligenceBoard,
     )[:3]
 
     actions = _committed_actions(mix)
+    watch_risks = [r for r in top_risks if r["score"] >= _WATCH_RISK_THRESHOLD]
     escalation = _escalation_level(
         gap, residual, covers_gap,
         int(twin.get("critical_count", 0) or 0),
         int(twin.get("stressed_count", 0) or 0),
+        top_risk_score=top_risks[0]["score"] if top_risks else 0.0,
     )
     spr_bridge = _spr_bridge(residual, state.get("scenarios", []) or [])
 
@@ -234,6 +271,10 @@ def _build_response_plan(state: EnergyIntelligenceBoard,
             "critical_refineries": critical,
             "stressed_refineries": stressed,
             "disrupted_corridors": disrupted,
+            # Evidence base: how many live news articles GRI actually saw. Zero
+            # means the run was BLIND — an all-clear must be caveated, because
+            # "no disruption found" and "no evidence looked at" are not the same.
+            "news_articles":       len(state.get("risk_signals", []) or []),
         },
         "procurement": {
             "covered_mbd":       covered,
@@ -245,7 +286,8 @@ def _build_response_plan(state: EnergyIntelligenceBoard,
             "spr_bridge":        spr_bridge,
         },
         "priority_actions": _priority_actions(escalation, residual, actions,
-                                              disrupted, block_flags, spr_bridge),
+                                              disrupted, block_flags, spr_bridge,
+                                              watch_risks=watch_risks),
         "unresolved_issues": unresolved,
         "generated_at": now,
     }
@@ -261,8 +303,24 @@ def _template_recommendation(plan: dict) -> str:
     esc = plan["escalation_level"].upper()
 
     if sit["gap_mbd"] <= 0:
+        # A blind run (zero news articles) must never hand out a confident
+        # all-clear: "no disruption found" ≠ "no evidence looked at".
+        caveat = ""
+        if sit.get("news_articles") == 0:
+            caveat = (" Caution: zero news articles were retrieved this run — "
+                      "this assessment is baseline-only and low confidence.")
+        elevated = [r for r in sit.get("top_corridor_risks", [])
+                    if r.get("score", 0) >= _WATCH_RISK_THRESHOLD]
+        if elevated:
+            info = ", ".join(
+                f"{r['corridor']} ({r['event_type']}, risk {r['score']:.2f})"
+                for r in elevated
+            )
+            return (f"{esc}: No India-bound crude shortfall projected, but risk "
+                    f"is elevated on {info}. Monitor closely; no procurement "
+                    f"action required at this time.{caveat}")
         return (f"{esc}: No India-bound crude shortfall projected. "
-                f"Corridors nominal; no procurement action required.")
+                f"Corridors nominal; no procurement action required.{caveat}")
 
     lead = sit["top_corridor_risks"][0] if sit["top_corridor_risks"] else None
     driver = (f"{lead['corridor']} ({lead['event_type']}, risk {lead['score']})"
@@ -281,6 +339,14 @@ def _template_recommendation(plan: dict) -> str:
     else:
         tail = (f"Procurement secures {proc['covered_mbd']} mbd "
                 f"({len(proc['committed_actions'])} cargo(es)), closing the gap.")
+
+    risky = [a for a in proc["committed_actions"]
+             if float(a.get("delivery_risk_fraction", 0.0) or 0.0) > 0]
+    if risky:
+        worst = max(float(a["delivery_risk_fraction"]) for a in risky)
+        tail += (f" Note: {len(risky)} committed cargo(es) transit partially "
+                 f"disrupted corridors (up to {round(worst * 100)}% choked) — "
+                 f"coverage counts expected delivery, not barrels bought.")
 
     return (f"{esc}: {driver} puts {sit['gap_mbd']} mbd of India-bound crude at "
             f"risk.{crit} {tail}")

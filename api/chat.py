@@ -129,22 +129,40 @@ store = ChatStore()
 
 # ── LLM helpers (gri_agent.py pattern: response_format json, broad except) ──
 
-_ROUTER_SYSTEM = """\
+_ROUTER_SYSTEM_TEMPLATE = """\
 You are the intent router for an energy-crisis AI board.
-Given the user's latest message and recent conversation history, return JSON:
-{"intent": "<run_board or answer_from_last_run>", "standalone_query": "<...>"}
+Given the user's latest message, recent conversation history, and the previous
+scenario context (if any), return JSON:
+{{"intent": "<run_board or answer_from_last_run>", "standalone_query": "<...>"}}
 
 Rules:
 - "run_board": a NEW crisis scenario, what-if, or request that needs fresh
-  computation.  Rewrite the message into a STANDALONE query that folds in any
-  relevant context from the conversation (e.g. "what about Americas only?" after
-  a Hormuz discussion → "Strait of Hormuz closed; source the shortfall only
-  from Americas suppliers").
+  computation.  Rewrite the message into a STANDALONE query that folds in the
+  PREVIOUS SCENARIO CONTEXT and any relevant conversation context.
+  The standalone query MUST describe the full scenario so a fresh agent can
+  understand it without seeing the conversation.
+  Examples:
+    "what about Americas only?" after Hormuz → "Strait of Hormuz is closed due
+    to military escalation; source the shortfall only from Americas suppliers."
+    "what if it lasts twice as long?" after Hormuz → "Iran closes the Strait of
+    Hormuz following a military escalation; the blockade lasts twice the normal
+    expected duration."
+    "add Suez disruption too" → "Strait of Hormuz is closed AND Suez Canal is
+    disrupted simultaneously."
 - "answer_from_last_run": a clarification or question about the LAST result
   ("why Bonny Light?", "explain the SPR bridge", "show me the flagged
   suppliers").  Set standalone_query to the user's message as-is.
 - When in doubt, choose "run_board" — it's the safe default.
-"""
+
+scenario_params: if the user mentions a DURATION modifier ("twice as long",
+"double the duration", "lasts 3x longer", "60 days", etc.), set
+"duration_multiplier" to the appropriate number (2.0, 3.0, etc.). If no
+duration modifier is mentioned, omit scenario_params entirely.
+
+Return JSON: {{"intent": "...", "standalone_query": "...", "scenario_params": {{...}} }}
+scenario_params is optional — only include it when the user modifies duration.
+
+{scenario_context}"""
 
 _ANSWER_SYSTEM = """\
 You are a crisis-briefing assistant grounded on the run digest below.
@@ -157,15 +175,39 @@ Digest:
 """
 
 
-def _route(message: str, turns: list[dict]) -> dict:
+def _build_scenario_context(summary: dict | None) -> str:
+    """Build a compact scenario context string from the previous run's summary."""
+    if not summary:
+        return "No previous scenario context."
+    parts = [f"Previous query: {summary.get('query', 'unknown')}"]
+    esc = summary.get("escalation_level")
+    if esc:
+        parts.append(f"Escalation: {esc}")
+    cr = summary.get("corridor_risk", {})
+    if cr:
+        risky = {c: s for c, s in cr.items() if (s if isinstance(s, (int, float)) else 0) >= 0.4}
+        if risky:
+            parts.append("Disrupted corridors: " + ", ".join(
+                f"{c} (score {s})" for c, s in risky.items()))
+    ts = summary.get("twin_summary", {}) or {}
+    gap = ts.get("total_india_shortfall_mbd")
+    if gap and float(gap) > 0:
+        parts.append(f"India shortfall: {gap} mbd")
+        parts.append(f"Critical refineries: {ts.get('critical_count', 0)}")
+    return "PREVIOUS SCENARIO CONTEXT:\n" + "\n".join(parts)
+
+
+def _route(message: str, turns: list[dict], summary: dict | None = None) -> dict:
     """Classify intent and rewrite the query into standalone form."""
+    scenario_context = _build_scenario_context(summary)
+    system_prompt = _ROUTER_SYSTEM_TEMPLATE.format(scenario_context=scenario_context)
     history = [{"role": t["role"], "content": t["content"]}
                for t in turns[-CHAT_HISTORY_TURNS:]]
     try:
         resp = _client.chat.completions.create(
             model=CHAT_MODEL,
             messages=[
-                {"role": "system", "content": _ROUTER_SYSTEM},
+                {"role": "system", "content": system_prompt},
                 *history,
                 {"role": "user", "content": message},
             ],
@@ -177,7 +219,11 @@ def _route(message: str, turns: list[dict]) -> dict:
         if intent not in ("run_board", "answer_from_last_run"):
             intent = "run_board"
         query = parsed.get("standalone_query") or message
-        return {"intent": intent, "standalone_query": query}
+        sp = parsed.get("scenario_params")
+        result = {"intent": intent, "standalone_query": query}
+        if isinstance(sp, dict) and sp:
+            result["scenario_params"] = sp
+        return result
     except Exception:
         return {"intent": "run_board", "standalone_query": message}
 
@@ -220,8 +266,25 @@ def _template_answer(summary: dict) -> str:
     corridor = top.get("corridor", "unknown corridor")
 
     if gap <= 0:
+        # Blind-run honesty: zero articles retrieved means the all-clear rests on
+        # baselines only — say so instead of implying a verified calm world.
+        news = summary.get("news_evidence", {}) or {}
+        caveat = ""
+        if news.get("article_count") == 0:
+            caveat = (" Caution: no live news evidence was retrieved this run — "
+                      "treat this assessment as low confidence.")
+        cr = summary.get("corridor_risk", {}) or {}
+        risky = {c: s for c, s in cr.items()
+                 if (float(s) if isinstance(s, (int, float)) else 0) >= 0.4}
+        if risky:
+            corridor_info = ", ".join(
+                f"{c} ({s:.2f})" for c, s in
+                sorted(risky.items(), key=lambda x: x[1], reverse=True))
+            return (f"{esc}: No India-bound crude shortfall projected despite "
+                    f"elevated risk on {corridor_info}. "
+                    f"No procurement action required at this time.{caveat}")
         return (f"{esc}: No India-bound crude shortfall projected. "
-                f"Corridors nominal; no procurement action required.")
+                f"All corridors nominal; no procurement action required.{caveat}")
 
     parts = [
         f"{esc}: {corridor} disruption projects a {gap} mbd India shortfall.",
@@ -252,16 +315,19 @@ def chat(req: ChatRequest) -> dict:
     store.append_turn(sid, "user", req.message)
 
     # First turn: skip the router — no prior run to answer from.
+    scenario_params: dict | None = None
     if ctx["run_count"] == 0:
         intent, query = "run_board", req.message
     else:
-        route = _route(req.message, ctx["turns"])
+        route = _route(req.message, ctx["turns"], ctx["summary"])
         intent, query = route["intent"], route["standalone_query"]
+        scenario_params = route.get("scenario_params")
 
     if intent == "run_board":
         run_n = ctx["run_count"] + 1
         final = run_board_with_learning(
             query,
+            scenario_params=scenario_params,
             thread_id=f"chat-{sid}-t{run_n}",
             checkpointer=_CHECKPOINTER,
             learn=req.learn,

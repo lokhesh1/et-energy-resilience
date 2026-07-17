@@ -190,9 +190,25 @@ def test_score_grade_mismatch_penalty():
 
 
 def test_score_disrupted_route_penalty():
+    # Flat penalty is the FALLBACK when the corridor fraction is unknown.
     clean = _score(_bid(), 0.15)
     disrupted = _score(_bid(routes_through_disrupted=True), 0.15)
     assert disrupted == pytest.approx(clean + _DISRUPTED_ROUTE_PENALTY)
+
+
+def test_score_delivery_risk_uplift_scales_with_fraction():
+    """Risk is priced by expectation: cost per DELIVERED barrel = price/(1−f),
+    so the uplift is price·f/(1−f) — it scales with the twin fraction and
+    replaces the flat penalty when the fraction is known."""
+    clean = _score(_bid(), 0.15)
+    risky = _score(_bid(delivery_risk_fraction=0.3), 0.15)
+    assert risky == pytest.approx(clean + 80.0 * 0.3 / 0.7, abs=1e-3)
+    # more disruption → strictly costlier
+    riskier = _score(_bid(delivery_risk_fraction=0.5), 0.15)
+    assert riskier > risky
+    # fraction takes precedence over the flat-penalty flag
+    both = _score(_bid(delivery_risk_fraction=0.3, routes_through_disrupted=True), 0.15)
+    assert both == pytest.approx(risky)
 
 
 # ── Evaluator: cost-of-delay / urgency ─────────────────────────────────────────
@@ -251,6 +267,17 @@ def test_eligible_rejects_nonpositive_volume():
     assert ok is False and reason == "non_positive_volume"
 
 
+def test_eligible_rejects_closed_delivery_corridor():
+    """Cargo through an effectively-closed corridor cannot count as coverage."""
+    ok, reason = _eligible(_bid(delivery_corridor="strait_of_hormuz"),
+                           closed={"strait_of_hormuz"})
+    assert ok is False and reason == "delivery_corridor_closed"
+    # the same bid is fine when the corridor is merely degraded (not in closed set)
+    ok2, reason2 = _eligible(_bid(delivery_corridor="strait_of_hormuz"),
+                             closed=set())
+    assert ok2 is True and reason2 is None
+
+
 # ── Evaluator: mix composition ─────────────────────────────────────────────────
 
 def test_mix_covers_gap_within_band():
@@ -282,6 +309,54 @@ def test_sanctioned_never_in_mix():
     out = bid_evaluator_node({**state, "bids": _all_bids(state)})
     for c in out["recommended_mix"]["components"]:
         assert c["sanctions_status"] != "blocked"
+
+
+def test_closed_corridor_cargo_never_in_mix():
+    """Hormuz at disruption_fraction 0.8 (>= 0.75 = closed): no committed cargo
+    may deliver through it — coverage must never count volume that physically
+    cannot arrive. Excluded bids stay visible with the exclusion reason."""
+    state = _state(gap=1.2, hormuz_disrupted=True)
+    out = bid_evaluator_node({**state, "bids": _all_bids(state)})
+    for c in out["recommended_mix"]["components"]:
+        assert c["delivery_corridor"] != "strait_of_hormuz"
+    ev = {b["supplier_id"]: b for b in out["evaluated_bids"]}
+    assert ev["spot_arab_light"]["eligible"] is False      # Hormuz cargo
+    assert ev["spot_arab_light"]["exclude_reason"] == "delivery_corridor_closed"
+    assert out["audit_trail"][0]["closed_corridor_exclusions"] >= 1
+
+
+def test_degraded_corridor_cargo_still_eligible():
+    """Below the closed threshold the corridor is passable: the bid stays
+    eligible, priced with the fraction-scaled risk uplift."""
+    state = _state(gap=1.2, hormuz_disrupted=True)
+    state["twin_state"]["corridors"][0]["disruption_fraction"] = 0.5  # degraded
+    out = bid_evaluator_node({**state, "bids": _all_bids(state)})
+    ev = {b["supplier_id"]: b for b in out["evaluated_bids"]}
+    assert ev["spot_arab_light"]["eligible"] is True
+    assert ev["spot_arab_light"]["exclude_reason"] is None
+    assert ev["spot_arab_light"]["delivery_risk_fraction"] == pytest.approx(0.5)
+
+
+def test_mix_fill_is_risk_discounted():
+    """A cargo through a fraction-f corridor counts as volume×(1−f) toward the
+    gap: the mix buys nominally more, reports both totals, and every risky
+    component carries its expected delivery."""
+    state = _state(gap=1.2, hormuz_disrupted=True)
+    state["twin_state"]["corridors"][0]["disruption_fraction"] = 0.3  # tension
+    out = bid_evaluator_node({**state, "bids": _all_bids(state)})
+    mix = out["recommended_mix"]
+    # effective (risk-discounted) delivery is what counts against the gap
+    assert mix["effective_volume_mbd"] == pytest.approx(
+        sum(c["effective_volume_mbd"] for c in mix["components"]), abs=1e-3)
+    assert mix["effective_volume_mbd"] <= mix["total_volume_mbd"] + 1e-9
+    for c in mix["components"]:
+        expected = c["volume_mbd"] * (1 - c["delivery_risk_fraction"])
+        assert c["effective_volume_mbd"] == pytest.approx(expected, abs=1e-3)
+    # PROC-07 invariant still holds on nominal volumes
+    assert mix["total_volume_mbd"] == pytest.approx(
+        sum(c["volume_mbd"] for c in mix["components"]), abs=1e-3)
+    # and nominal stays inside the PROC-06 band
+    assert mix["coverage_ratio"] <= 1.3 + 1e-9
 
 
 def test_cheapest_eligible_selected_first():  # behaviour (price-first)

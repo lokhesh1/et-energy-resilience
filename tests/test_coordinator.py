@@ -105,9 +105,10 @@ def test_uncovered_gap_escalates_critical_and_flags_residual():
     assert out["constitution_flags"] == []               # its own plan is consistent
 
 
-def test_no_gap_is_routine_and_needs_no_action():
+def test_no_gap_low_risk_is_routine_and_needs_no_action():
     out = _run_node(_state(gap=0.0, covered=0.0, covers_gap=True, critical=0,
-                           components=[], disrupted=False))
+                           components=[], disrupted=False,
+                           corridor_risk={"strait_of_hormuz": 0.2}))
     plan = out["response_plan"]
     assert plan["escalation_level"] == "routine"
     assert plan["procurement"]["committed_actions"] == []
@@ -115,9 +116,64 @@ def test_no_gap_is_routine_and_needs_no_action():
     assert "No India-bound crude shortfall" in out["final_recommendation"]
 
 
+def test_no_gap_elevated_risk_is_watch_not_routine():
+    """Real tension with zero projected shortfall must read 'watch' and name the
+    corridor — never a 'routine / corridors nominal' all-clear."""
+    out = _run_node(_state(gap=0.0, covered=0.0, covers_gap=True, critical=0,
+                           components=[], disrupted=False,
+                           corridor_risk={"strait_of_hormuz": 0.9}))
+    plan = out["response_plan"]
+    assert plan["escalation_level"] == "watch"
+    assert any("strait_of_hormuz" in a for a in plan["priority_actions"])
+    rec = out["final_recommendation"]
+    assert "strait_of_hormuz" in rec
+    assert "nominal" not in rec.lower()
+    assert "No India-bound crude shortfall" in rec
+
+
+def test_no_gap_blind_run_recommendation_is_caveated():
+    """Zero news articles retrieved → the all-clear must carry a low-confidence
+    caveat ('no evidence looked at' ≠ 'no disruption found')."""
+    blind = _state(gap=0.0, covered=0.0, covers_gap=True, critical=0,
+                   components=[], disrupted=False,
+                   corridor_risk={"strait_of_hormuz": 0.2})
+    blind["risk_signals"] = []
+    out = _run_node(blind)
+    assert out["response_plan"]["situation"]["news_articles"] == 0
+    assert "low confidence" in out["final_recommendation"].lower()
+
+    informed = _state(gap=0.0, covered=0.0, covers_gap=True, critical=0,
+                      components=[], disrupted=False,
+                      corridor_risk={"strait_of_hormuz": 0.2})
+    informed["risk_signals"] = [{"title": "Gulf calm as talks progress"}]
+    out2 = _run_node(informed)
+    assert out2["response_plan"]["situation"]["news_articles"] == 1
+    assert "low confidence" not in out2["final_recommendation"].lower()
+
+
 def test_stressed_only_is_elevated():
     out = _run_node(_state(gap=0.5, covered=0.5, covers_gap=True, critical=0, stressed=2))
     assert out["response_plan"]["escalation_level"] == "elevated"
+
+
+def test_risky_cargo_is_disclosed_and_coverage_risk_discounted():
+    """A committed cargo through a 30%-disrupted corridor: covered counts
+    expected delivery (0.7, not 1.0), the residual is honest, the secure line
+    carries a CAUTION, and the narrative discloses the risk-adjustment."""
+    state = _state(gap=1.0, covered=1.0, covers_gap=False, critical=1)
+    state["recommended_mix"]["components"] = [{
+        **_clean_bid(volume=1.0, corridor="strait_of_hormuz"),
+        "delivery_risk_fraction": 0.3, "effective_volume_mbd": 0.7,
+    }]
+    state["recommended_mix"]["effective_volume_mbd"] = 0.7
+    out = _run_node(state)
+    plan = out["response_plan"]
+    assert plan["procurement"]["covered_mbd"] == pytest.approx(0.7)
+    assert plan["procurement"]["residual_gap_mbd"] == pytest.approx(0.3)
+    assert plan["escalation_level"] == "critical"    # honest uncovered residual
+    secure = next(a for a in plan["priority_actions"] if a.startswith("Secure"))
+    assert "CAUTION" in secure and "30%" in secure
+    assert "partially disrupted" in out["final_recommendation"]
 
 
 # ── Narrative ────────────────────────────────────────────────────────────────────

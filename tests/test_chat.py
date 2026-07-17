@@ -122,8 +122,8 @@ def _mock_board(monkeypatch, final=None):
 def _mock_route(monkeypatch, intent="run_board", query="standalone Q"):
     """Patch the router LLM."""
     monkeypatch.setattr(chat, "_route",
-                        lambda msg, turns: {"intent": intent,
-                                            "standalone_query": query})
+                        lambda msg, turns, summary=None: {"intent": intent,
+                                                          "standalone_query": query})
 
 
 def _mock_answer(monkeypatch, reply="Grounded answer."):
@@ -161,8 +161,8 @@ def test_first_turn_skips_router_runs_board(client, monkeypatch):
     llm_calls = []
     orig_route = chat._route
     monkeypatch.setattr(chat, "_route",
-                        lambda msg, turns: (llm_calls.append(1) or
-                                            orig_route(msg, turns)))
+                        lambda msg, turns, summary=None: (llm_calls.append(1) or
+                                                          orig_route(msg, turns, summary)))
     r = client.post("/chat", json={"message": "Hormuz crisis"})
     assert r.json()["mode"] == "run_board"
     assert len(calls) == 1
@@ -435,6 +435,48 @@ def test_summarize_final_adds_stigmergy():
     assert out["stigmergy"]["top_markers"][0]["target"] == "strait_of_hormuz"
     # audit_trail still excluded
     assert "audit_trail" not in out
+
+
+def test_summarize_final_reports_news_evidence():
+    """Zero retrieved articles must be visible downstream — a blind run and a
+    calm world are different answers."""
+    out = summarize_final(_FINAL)  # fixture has no risk_signals → blind
+    assert out["news_evidence"]["article_count"] == 0
+
+    informed = {**_FINAL,
+                "risk_signals": [{"title": "a"}, {"title": "b"}],
+                "audit_trail": [{"agent": "gri_agent", "action": "tool_fetch",
+                                 "news_status": "ok"}]}
+    out2 = summarize_final(informed)
+    assert out2["news_evidence"] == {"article_count": 2, "news_status": "ok"}
+
+
+def test_metrics_include_news_evidence_tone():
+    summary = summarize_final(_FINAL)
+    comps = build_components(summary, _FINAL["twin_state"])
+    metrics = next(c for c in comps if c["type"] == "metrics")
+    item = next(it for it in metrics["items"] if it["label"] == "News evidence")
+    assert item["value"] == 0
+    assert item["tone"] == "elevated"  # blind run is flagged, not green
+
+
+def test_template_answer_caveats_blind_all_clear():
+    """gap<=0 + zero articles → the template all-clear carries the caveat."""
+    quiet_blind = summarize_final({
+        **_FINAL,
+        "response_plan": {"escalation_level": "routine",
+                          "situation": {}, "procurement": {}},
+        "twin_state": {"total_india_shortfall_mbd": 0,
+                       "critical_count": 0, "stressed_count": 0},
+        "corridor_risk": {"strait_of_hormuz": 0.1},
+    })
+    reply = chat._template_answer(quiet_blind)
+    assert "low confidence" in reply.lower()
+
+    quiet_informed = {**quiet_blind,
+                      "news_evidence": {"article_count": 12, "news_status": "ok"}}
+    reply2 = chat._template_answer(quiet_informed)
+    assert "low confidence" not in reply2.lower()
 
 
 # ── /audit/verify endpoint ──────────────────────────────────────────────────────

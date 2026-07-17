@@ -136,6 +136,50 @@ def test_trajectory_caps_list_sizes():
     assert len(traj["scenarios"]) == ed._MAX_ITEMS
 
 
+def test_trajectory_carries_stressed_refinery_names():
+    """A tension run can have 12 stressed / 0 critical — 'which refineries?'
+    must still be answerable from the digest."""
+    s = _covered_state()
+    s["twin_state"]["refineries"] = [
+        {"name": "Jamnagar", "status": "critical"},
+        {"name": "Kochi", "status": "stressed"},
+        {"name": "Panipat", "status": "stressed"},
+    ]
+    traj = build_trajectory(s)
+    assert traj["twin"]["critical_refineries"] == ["Jamnagar"]
+    assert traj["twin"]["stressed_refineries"] == ["Kochi", "Panipat"]
+
+
+def test_trajectory_critical_refineries_not_capped():
+    """The name list is bounded by the physical refineries file — truncating it
+    makes follow-up answers contradict the board's critical_count."""
+    s = _covered_state()
+    s["twin_state"]["refineries"] = [
+        {"name": f"R{i}", "status": "critical"} for i in range(12)]
+    traj = build_trajectory(s)
+    assert len(traj["twin"]["critical_refineries"]) == 12
+
+
+def test_trajectory_carries_reroutes():
+    """Reroute options must reach the follow-up digest — 'what are the reroute
+    options?' is a suggested follow-up chip and must be answerable."""
+    s = _covered_state()
+    s["twin_state"]["routes"] = [{
+        "from_corridor": "strait_of_hormuz", "to_corridor": "cape_of_good_hope",
+        "added_transit_days": 14, "freight_cost_mult": 1.4,
+        "volume_mbd": 21.0, "alt_baseline_mbd": 5.5, "overloaded": True,
+    }]
+    traj = build_trajectory(s)
+    routes = traj["twin"]["reroutes"]
+    assert routes == [{
+        "from_corridor": "strait_of_hormuz", "to_corridor": "cape_of_good_hope",
+        "added_transit_days": 14, "freight_cost_mult": 1.4,
+        "volume_mbd": 21.0, "overloaded": True,
+    }]
+    # absent routes → empty list, never a KeyError
+    assert build_trajectory(_covered_state())["twin"]["reroutes"] == []
+
+
 def test_trajectory_handles_dict_score_shape():
     s = _covered_state()
     s["corridor_risk"] = {"strait_of_hormuz": {"score": 0.85}}

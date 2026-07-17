@@ -27,6 +27,14 @@ def summarize_final(final: dict) -> dict:
         markers, key=lambda m: float(m.get("intensity", 0)), reverse=True,
     )[:5]
 
+    # Evidence base of the run: zero articles means GRI assessed blind, and any
+    # "routine / all-clear" must be read as low confidence, not as a calm world.
+    news_status = None
+    for e in final.get("audit_trail", []) or []:
+        if e.get("agent") == "gri_agent" and e.get("action") == "tool_fetch":
+            news_status = e.get("news_status")
+            break
+
     return {
         "query":                final.get("query", ""),
         "escalation_level":     plan.get("escalation_level"),
@@ -39,6 +47,10 @@ def summarize_final(final: dict) -> dict:
             "stressed_count":            twin.get("stressed_count"),
         },
         "recommended_mix":     final.get("recommended_mix", {}),
+        "news_evidence": {
+            "article_count": len(final.get("risk_signals", []) or []),
+            "news_status":   news_status,
+        },
         "retrieved_memories":  final.get("retrieved_memories", []),
         "constitution_flags":  final.get("constitution_flags", []),
         "pheromone_field":     final.get("pheromone_field", {}) or {},
@@ -65,7 +77,7 @@ def _tone(value: float | int | str | None, kind: str) -> str:
         s = str(value or "routine").lower()
         if s == "critical":
             return "critical"
-        if s == "elevated":
+        if s in ("elevated", "watch"):
             return "elevated"
         return "ok"
     if kind == "count":
@@ -114,7 +126,8 @@ def build_components(summary: dict, twin_state: dict) -> list[dict]:
     gap = float(ts.get("total_india_shortfall_mbd") or 0)
     critical = int(ts.get("critical_count") or 0)
     stressed = int(ts.get("stressed_count") or 0)
-    coverage = float(proc.get("coverage_ratio") or 0) if gap > _TOL else 0.0
+    has_gap = gap > _TOL
+    coverage = float(proc.get("coverage_ratio") or 0) if has_gap else None
     residual = float(proc.get("residual_gap_mbd") or 0)
 
     components.append({
@@ -129,12 +142,23 @@ def build_components(summary: dict, twin_state: dict) -> list[dict]:
              "unit": None, "tone": _tone(critical, "count")},
             {"label": "Stressed refineries", "value": stressed,
              "unit": None, "tone": _tone(stressed, "count")},
-            {"label": "Coverage",            "value": round(coverage, 2),
-             "unit": "×",  "tone": _tone(coverage, "coverage")},
+            {"label": "Coverage",            "value": round(coverage, 2) if coverage is not None else "—",
+             "unit": "×" if coverage is not None else None,
+             "tone": _tone(coverage, "coverage") if coverage is not None else "ok"},
             {"label": "Residual gap",        "value": round(residual, 3),
              "unit": "mbd", "tone": _tone(residual, "residual")},
         ],
     })
+
+    # Evidence base — zero articles means the run was blind; flag it, so a green
+    # board can never masquerade as a verified calm world.
+    news = summary.get("news_evidence", {}) or {}
+    articles = news.get("article_count")
+    if articles is not None:
+        components[-1]["items"].append({
+            "label": "News evidence", "value": articles, "unit": "articles",
+            "tone": "elevated" if articles == 0 else "ok",
+        })
 
     # ── Mix table ──
     actions = proc.get("committed_actions", []) or []

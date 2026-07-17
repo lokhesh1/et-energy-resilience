@@ -7,7 +7,7 @@ load_dotenv(Path(__file__).parent / ".env")
 # ── LLM ──
 OPENROUTER_API_KEY  = os.getenv("OPENROUTER_API_KEY")
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
-GRI_MODEL           = "google/gemini-2.5-flash-lite"   # cheapest Flash; ~$0.001/run
+GRI_MODEL           = "google/gemini-2.5-flash"        # foundation agent — accuracy over cost
 # Distillation is a judgment task (extract reusable lessons) — kept on its own
 # knob so it can be upgraded independently of GRI. Prod model TBD.
 DISTILLER_MODEL     = "google/gemini-2.5-flash"

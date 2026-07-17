@@ -1,12 +1,12 @@
 {
-  "_note": "ILLUSTRATIVE Bid-Evaluator scoring params — hand-seeded, NOT calibrated. Same status as dsm_params.json / refineries.json (see CLAUDE.md). The evaluator ranks bids on lowest TOTAL ECONOMIC IMPACT, not lowest sticker price: total_cost_per_bbl = price_per_bbl + grade_mismatch_penalty (if no affected refinery can run the grade) + disrupted_route_penalty (if the cargo routes through the disrupted corridor) + transit_days x impact_per_day. impact_per_day = delay_cost.base_per_bbl_per_day + urgency x delay_cost.urgency_extra_per_bbl_per_day, where urgency in [0,1] scales with SCTD's shortfall severity (twin critical/stressed refinery counts) PLUS SPR pressure: spr_weight x max(0, 1 - spr_days_of_cover/spr_comfort_days) — a gap the strategic reserve could bridge for spr_comfort_days or more adds nothing; a gap that would drain it in days pushes urgency up. So when the shortfall is mild, impact_per_day is small and the cheapest cargo wins; when it is critical, every extra day the gap stays open is expensive and a faster-but-pricier cargo can win. Calibrate before treating as real.",
+  "_note": "ILLUSTRATIVE Bid-Evaluator scoring params — hand-seeded, NOT calibrated. Same status as dsm_params.json / refineries.json (see CLAUDE.md). The evaluator ranks bids on lowest TOTAL ECONOMIC IMPACT, not lowest sticker price: total_cost_per_bbl = price_per_bbl + grade_mismatch_penalty (if no affected refinery can run the grade) + a delivery-risk uplift (price x f/(1-f) where f is the delivery corridor's twin disruption fraction — the expected cost per DELIVERED barrel; disrupted_route_penalty_usd is only the flat fallback when the fraction is unknown) + transit_days x impact_per_day. impact_per_day = delay_cost.base_per_bbl_per_day + urgency x delay_cost.urgency_extra_per_bbl_per_day, where urgency in [0,1] scales with SCTD's shortfall severity (twin critical/stressed refinery counts) PLUS SPR pressure: spr_weight x max(0, 1 - spr_days_of_cover/spr_comfort_days). stressed_refinery_weight is deliberately small so a broad-but-mild stress field cannot saturate urgency to catastrophe levels (12 stressed = 0.72, not 1.0) — only critical refineries can max it out. Calibrate before treating as real.",
   "grade_mismatch_penalty_usd": 15.0,
   "disrupted_route_penalty_usd": 10.0,
   "delay_cost": {
     "base_per_bbl_per_day": 0.15,
     "urgency_extra_per_bbl_per_day": 2.0,
     "critical_refinery_weight": 0.5,
-    "stressed_refinery_weight": 0.15,
+    "stressed_refinery_weight": 0.06,
     "spr_weight": 0.6,
     "spr_comfort_days": 30.0,
     "max_urgency": 1.0

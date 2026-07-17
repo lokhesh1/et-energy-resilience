@@ -8,7 +8,7 @@ from config.settings import OPENROUTER_API_KEY, OPENROUTER_BASE_URL, GRI_MODEL
 from graph.eib_state import EnergyIntelligenceBoard, StigmergyMarker
 from eib_guardrails.constitution_checker import check as constitution_check
 from tools.corridor_status import get_corridor_status
-from tools.news_fetcher import fetch_news
+from tools.news_fetcher import fetch_news, build_search_query
 from memory.xmemory import XMemory
 
 KNOWN_CORRIDORS = {
@@ -27,12 +27,25 @@ _MEMORY_PERSIST_THRESHOLD = 0.6
 
 _SYSTEM_PROMPT = """You are a Geopolitical Risk Intelligence (GRI) analyst for Indian energy supply chains.
 
-Your role is to assess evidence and derive risk scores — not predict or anticipate.
-Rules:
-- Cite only the news signals provided. Do not add external knowledge as evidence.
-- If a corridor has no relevant signals, assign the default score (chokepoint=0.2, non-chokepoint=0.1).
-- evidence_count must exactly match the number of items in key_signals.
-- Respond with valid JSON only — no prose outside the JSON object."""
+Your task has TWO phases — do them in order.
+
+PHASE 1 — SCENARIO EXTRACTION (from the QUERY):
+Read the user's QUERY. If it describes a disruption, blockade, closure, conflict, sanctions, attack, or any threat to one or more corridors, those corridors are SCENARIO-DISRUPTED. Score them to match the described severity:
+  - blockade / closure / shut down / military action → 0.85-1.0
+  - sanctions / embargo → 0.7-0.9
+  - attack / piracy / infrastructure failure → 0.7-0.9
+  - tension / escalation / exercises → 0.4-0.6
+  - general disruption / risk → 0.5-0.7
+If the query names MULTIPLE corridors, score ALL of them — not just one.
+If the query describes no disruption (e.g. "current status?"), skip this phase.
+
+PHASE 2 — NEWS CORROBORATION:
+Check the provided news signals. For each corridor:
+  - If news supports the scenario → cite articles in key_signals, optionally raise the score.
+  - If news contradicts the scenario → note it in reasoning, optionally lower (but not below 0.5 for an explicit scenario).
+  - For corridors NOT in the scenario and with no relevant news → default score (chokepoint=0.2, non-chokepoint=0.1).
+
+Respond with valid JSON only — no prose outside the JSON object."""
 
 
 def _build_user_prompt(query: str, articles: list[dict], corridors: list[dict]) -> str:
@@ -46,19 +59,21 @@ def _build_user_prompt(query: str, articles: list[dict], corridors: list[dict]) 
     )
     return f"""QUERY: {query}
 
+The 8 known corridor IDs are: strait_of_hormuz, suez_canal, malacca_strait, bab_el_mandeb, turkish_straits, danish_straits, cape_of_good_hope, panama_canal.
+
 NEWS SIGNALS (trust_score | title | source):
-{signals}
+{signals or "(no articles found)"}
 
 CORRIDOR BASELINES:
 {baselines}
 
-CHAIN OF EVIDENCE INSTRUCTIONS:
-1. For each of the 8 known corridors, list relevant signals from above (key_signals).
-2. Derive score from signal count × trust weight — show reasoning in one sentence.
-3. Any corridor name NOT in the 8 known ones goes to novel_corridor_alerts only.
-4. Classify the dominant risk driver for each corridor as one of:
-   war_conflict | sanctions | political_tension | weather_disruption |
-   market_spike | piracy | infrastructure_failure | none
+INSTRUCTIONS:
+1. PHASE 1: Read the QUERY. Identify which of the 8 corridors it explicitly describes as disrupted. Score each one by the described severity (see system prompt). If MULTIPLE corridors are named, score ALL of them.
+2. PHASE 2: Check news signals for corroboration. Cite matching articles in key_signals.
+3. For corridors not in the scenario and with no news, use default scores (chokepoint=0.2, non-chokepoint=0.1).
+4. Any corridor name NOT in the 8 known ones → novel_corridor_alerts only.
+5. Classify each corridor's dominant risk driver as one of: war_conflict | sanctions | political_tension | weather_disruption | market_spike | piracy | infrastructure_failure | none
+6. You MUST include ALL 8 corridors in corridor_risk — not just the disrupted ones.
 
 Return this exact JSON schema:
 {{
@@ -66,10 +81,10 @@ Return this exact JSON schema:
     "<corridor_id>": {{
       "score": <float 0.0-1.0>,
       "confidence": <float 0.0-1.0>,
-      "evidence_count": <int matching key_signals length>,
-      "key_signals": ["<exact article title>"],
-      "reasoning": "<one sentence>",
-      "event_type": "<one of the 8 valid types above>"
+      "evidence_count": <int — number of key_signals>,
+      "key_signals": ["<exact article title from news above, or empty list>"],
+      "reasoning": "<one sentence explaining the score>",
+      "event_type": "<one of the 8 types above>"
     }}
   }},
   "novel_corridor_alerts": ["<name>"],
@@ -84,7 +99,7 @@ def _deposit_pheromones(corridor_risk: dict) -> list[StigmergyMarker]:
         {
             "type":         "risk",
             "target":       cid,
-            "intensity":    round(float(val.get("score", val)), 4),
+            "intensity":    round(float(val.get("score", val) if isinstance(val, dict) else val), 4),
             "deposited_by": "gri_agent",
             "timestamp":    now,
             "decay_rate":   0.1,
@@ -106,7 +121,10 @@ def gri_node(state: EnergyIntelligenceBoard) -> dict:
     now      = datetime.now(timezone.utc).isoformat()
 
     # ── 1. Parallel tool fetch ─────────────────────────────────────────────
-    news_result, corridor_result = _fetch_tools(query)
+    # The news search runs on corridor keywords derived from the query — never
+    # on the raw conversational text (see tools.news_fetcher.build_search_query).
+    search_query = build_search_query(query)
+    news_result, corridor_result = _fetch_tools(search_query)
     articles  = news_result["data"]["articles"]
     corridors = corridor_result["data"]["corridors"]
 
@@ -119,6 +137,7 @@ def gri_node(state: EnergyIntelligenceBoard) -> dict:
     audit: list[dict] = [{
         "agent":             "gri_agent",
         "action":            "tool_fetch",
+        "news_query":        search_query,
         "news_status":       news_result["status"],
         "corridor_status":   corridor_result["status"],
         "article_count":     len(articles),
@@ -135,7 +154,7 @@ def gri_node(state: EnergyIntelligenceBoard) -> dict:
                 {"role": "user",   "content": _build_user_prompt(query, articles, corridors)},
             ],
             response_format={"type": "json_object"},
-            temperature=0.1,
+            temperature=0.0,
         )
         llm_output = json.loads(response.choices[0].message.content)
     except Exception as e:
