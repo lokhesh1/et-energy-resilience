@@ -138,9 +138,15 @@ def extract_domain(url: str) -> str:
 
 
 def tag_article(article: dict) -> dict:
-    domain = extract_domain(article.get("url", ""))
+    # `source_domain` (when present) overrides the URL for the trust lookup —
+    # aggregator links (Google News RSS) point at a redirect URL, not the outlet.
+    # `trust_rated` distinguishes "we have no rating for this domain" (long-tail
+    # outlet, score defaults low) from an actual low rating (e.g. rt.com).
+    domain = article.get("source_domain") or extract_domain(article.get("url", ""))
+    rated = domain in SOURCE_TRUST_MAP and domain != "unknown"
     trust = SOURCE_TRUST_MAP.get(domain, SOURCE_TRUST_MAP["unknown"])
-    return {**article, "trust_score": trust, "trusted": trust >= TRUST_THRESHOLD}
+    return {**article, "trust_score": trust, "trusted": trust >= TRUST_THRESHOLD,
+            "trust_rated": rated}
 
 
 def embed_canary(data: dict, token_id: str) -> dict:

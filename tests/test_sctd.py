@@ -219,3 +219,28 @@ def test_memory_failure_does_not_break_node(_mock_xmemory):
     _mock_xmemory.remember.side_effect = RuntimeError("cloud down")
     result = _run_sctd(_hormuz_war())
     assert result["twin_state"]["total_india_shortfall_mbd"] > 0
+
+
+# ── Per-corridor shortfall decomposition (attribution, debugger.md #20) ────────
+
+def test_shortfall_by_corridor_decomposes_total():
+    state = {"scenarios": [
+        {"corridor": "strait_of_hormuz", "disruption_fraction": 1.0,
+         "volume_at_risk_mbd": 21.0, "quarantined": False, "reroute": None},
+        {"corridor": "bab_el_mandeb", "disruption_fraction": 1.0,
+         "volume_at_risk_mbd": 6.2, "quarantined": False, "reroute": None},
+    ]}
+    result = _run_sctd(state)
+    twin = result["twin_state"]
+    parts = twin["shortfall_by_corridor"]
+    assert set(parts) == {"strait_of_hormuz", "bab_el_mandeb"}
+    # Hormuz dependency shares dominate the refinery base — its contribution must
+    # exceed bab's even though both corridors are fully disrupted
+    assert parts["strait_of_hormuz"] > parts["bab_el_mandeb"]
+    assert sum(parts.values()) == pytest.approx(
+        twin["total_india_shortfall_mbd"], abs=0.01)
+
+
+def test_shortfall_by_corridor_empty_when_no_disruption():
+    result = _run_sctd({"scenarios": []})
+    assert result["twin_state"]["shortfall_by_corridor"] == {}

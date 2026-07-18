@@ -13,6 +13,60 @@ _TOL = 1e-6
 
 # ── summarize_final ─────────────────────────────────────────────────────────────
 
+# The inspectable evidence sample: an article COUNT the user can't open is not
+# evidence. Capped, and round-robin'd across corridor tags so the sample covers
+# every corridor that had news, not just the loudest one.
+_EVIDENCE_ARTICLE_CAP = 12
+
+
+def _shape_article(a: dict) -> dict:
+    return {
+        "title":       a.get("title", ""),
+        "url":         a.get("url", ""),
+        "source":      a.get("source", "unknown"),
+        "trust_score": a.get("trust_score"),
+        "trust_rated": a.get("trust_rated"),
+        "corridors":   a.get("corridors", []) or [],
+    }
+
+
+def _trust(a: dict) -> float:
+    return float(a.get("trust_score") or 0)
+
+
+def _evidence_articles(signals: list[dict], cap: int = _EVIDENCE_ARTICLE_CAP) -> list[dict]:
+    # Priority: corridor-tagged articles (actual corridor evidence) before
+    # untagged sweep noise; within each bucket, highest-trust sources first —
+    # a Reuters article at position 15 of the fetch must not lose its slot to
+    # an unrated market wrap-up at position 1.
+    tagged: dict[str, list[dict]] = {}
+    untagged: list[dict] = []
+    for a in signals:
+        tags = a.get("corridors") or []
+        if tags:
+            tagged.setdefault(tags[0], []).append(a)
+        else:
+            untagged.append(a)
+    for bucket in tagged.values():
+        bucket.sort(key=_trust, reverse=True)
+    untagged.sort(key=_trust, reverse=True)
+
+    out: list[dict] = []
+    depth = 0
+    while len(out) < cap and any(depth < len(b) for b in tagged.values()):
+        for tag in sorted(tagged):
+            bucket = tagged[tag]
+            if depth < len(bucket):
+                out.append(_shape_article(bucket[depth]))
+                if len(out) >= cap:
+                    return out
+        depth += 1
+    for a in untagged:
+        if len(out) >= cap:
+            break
+        out.append(_shape_article(a))
+    return out
+
 def summarize_final(final: dict) -> dict:
     """Curate the big final board state into a useful response.
 
@@ -29,11 +83,29 @@ def summarize_final(final: dict) -> dict:
 
     # Evidence base of the run: zero articles means GRI assessed blind, and any
     # "routine / all-clear" must be read as low confidence, not as a calm world.
+    # Also lift GRI's failure/tripwire signals out of the audit trail — a failed
+    # scoring step or scores-contradict-evidence warning buried in the audit DB
+    # is invisible; the UI must be able to show it (debugger.md #21).
     news_status = None
+    by_corridor: dict = {}
+    assessment = {
+        "failed":                     bool(final.get("assessment_failed")),
+        "failure_reason":             None,
+        "evidence_ignored_corridors": [],
+    }
     for e in final.get("audit_trail", []) or []:
-        if e.get("agent") == "gri_agent" and e.get("action") == "tool_fetch":
+        if e.get("agent") != "gri_agent":
+            continue
+        action = e.get("action")
+        if action == "tool_fetch" and news_status is None:
             news_status = e.get("news_status")
-            break
+            by_corridor = e.get("evidence_by_corridor", {}) or {}
+        elif action == "llm_assessment" and e.get("llm_failure"):
+            assessment["failed"] = True
+            assessment["failure_reason"] = e.get("llm_failure")
+        elif action == "evidence_ignored_warning":
+            assessment["evidence_ignored_corridors"] = sorted(
+                (e.get("corridors") or {}).keys())
 
     return {
         "query":                final.get("query", ""),
@@ -50,7 +122,10 @@ def summarize_final(final: dict) -> dict:
         "news_evidence": {
             "article_count": len(final.get("risk_signals", []) or []),
             "news_status":   news_status,
+            "by_corridor":   by_corridor,
+            "articles":      _evidence_articles(final.get("risk_signals", []) or []),
         },
+        "assessment":          assessment,
         "retrieved_memories":  final.get("retrieved_memories", []),
         "constitution_flags":  final.get("constitution_flags", []),
         "pheromone_field":     final.get("pheromone_field", {}) or {},
@@ -160,6 +235,25 @@ def build_components(summary: dict, twin_state: dict) -> list[dict]:
             "tone": "elevated" if articles == 0 else "ok",
         })
 
+    # Failed risk scoring is the loudest fact on the board: every green tile
+    # beside it is an unassessed default, so it goes FIRST (debugger.md #21).
+    assessment = summary.get("assessment", {}) or {}
+    if assessment.get("failed"):
+        components[-1]["items"].insert(0, {
+            "label": "Risk scoring", "value": "FAILED", "unit": None,
+            "tone": "critical",
+        })
+
+    # Disrupted corridors, so the cause is countable at a glance — the names +
+    # per-corridor impact render below the tiles (debugger.md #20).
+    sit = plan.get("situation", {}) or {}
+    drivers = sit.get("disruption_drivers") or []
+    if drivers:
+        components[-1]["items"].append({
+            "label": "Disrupted corridors", "value": len(drivers), "unit": None,
+            "tone": "critical",
+        })
+
     # ── Mix table ──
     actions = proc.get("committed_actions", []) or []
     if actions or gap > _TOL:
@@ -220,8 +314,12 @@ def suggest_follow_ups(summary: dict) -> list[str]:
     if critical > 0:
         pool.append("Which refineries are critical and what are their reroute options?")
 
-    # Top corridor by score
-    if corridor_risk:
+    # Top corridor by IMPACT when the twin decomposed the gap (the corridor
+    # costing the most, debugger.md #20); by score otherwise.
+    drivers = sit.get("disruption_drivers") or []
+    if drivers:
+        pool.append(f"What if the {drivers[0]['corridor']} disruption lasts twice as long?")
+    elif corridor_risk:
         top_c = max(corridor_risk, key=lambda c: _risk_score(corridor_risk[c]))
         if _risk_score(corridor_risk[top_c]) >= 0.5:
             pool.append(f"What if the {top_c} disruption lasts twice as long?")

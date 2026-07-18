@@ -224,6 +224,22 @@ def sctd_node(state: EnergyIntelligenceBoard) -> dict:
     affected = [i for i in impacts if i["status"] != "normal"]
     total_shortfall = round(sum(i["feed_at_risk_mbd"] for i in impacts), 4)
 
+    # Per-corridor decomposition of that shortfall, so the fan-in can attribute
+    # the gap honestly (which corridor is COSTING how much) instead of crediting
+    # the whole number to whichever corridor has the loudest risk score.
+    # shortfall_by_corridor[cid] = Σ_refineries capacity × dependency_share ×
+    # disruption_fraction; sums to total_shortfall except where a refinery's
+    # at_risk_share was capped at 1.0 (then the parts slightly overstate).
+    shortfall_by_corridor: dict[str, float] = {}
+    for r in _REFINERIES:
+        cap = float(r.get("capacity_mbd", 0.0))
+        for cid, share in (r.get("corridor_dependency") or {}).items():
+            frac = fraction_by_corridor.get(cid, 0.0)
+            if frac > 0.0:
+                shortfall_by_corridor[cid] = round(
+                    shortfall_by_corridor.get(cid, 0.0)
+                    + cap * float(share) * frac, 4)
+
     # ── 4. Routes + bottleneck detection ───────────────────────────────────
     non_quarantined = [s for s in scenarios if not s.get("quarantined")]
     routes = _build_routes(non_quarantined, corridors_by_id)
@@ -255,6 +271,7 @@ def sctd_node(state: EnergyIntelligenceBoard) -> dict:
         "corridors":                corridor_view,
         "routes":                   routes,
         "total_india_shortfall_mbd": total_shortfall,
+        "shortfall_by_corridor":    shortfall_by_corridor,
         "critical_count":           sum(1 for i in impacts if i["status"] == "critical"),
         "stressed_count":           sum(1 for i in impacts if i["status"] == "stressed"),
         "geojson":                  geo["data"]["geojson"],

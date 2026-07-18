@@ -93,6 +93,21 @@ def _check_gri(output: dict, rules: list[dict]) -> list[dict]:
                 "message": f"No evidence for corridor {cid} — assessment not permitted",
             })
 
+    # GRI-09: the scorecard must not be empty of known corridors. An LLM failure
+    # collapses to corridor_risk {} — without this rule that empty scorecard
+    # passes every per-corridor check (they iterate over nothing) and the run
+    # reads "all corridors nominal" downstream. Only checked when the payload IS
+    # an assessment (the tool-fetch check carries no corridor_risk key).
+    if "corridor_risk" in output:
+        scored = set(output.get("corridor_risk", {}) or {})
+        if not (scored & KNOWN_CORRIDORS):
+            violations.append({
+                "rule_id": "GRI-09",
+                "severity": rule_map["GRI-09"]["severity"],
+                "message": ("scorecard names no known corridor — assessment "
+                            "failed; downstream must not read this as calm"),
+            })
+
     # GRI-08: event_type must be present and valid
     valid_event_types = {
         "war_conflict", "sanctions", "political_tension", "weather_disruption",

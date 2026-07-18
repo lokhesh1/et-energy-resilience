@@ -159,6 +159,8 @@ def initial_state(query: str = "", scenario_params: dict | None = None) -> Energ
         "risk_signals": [],
         "corridor_risk": {},
         "corridor_events": {},
+        "assessment_failed": False,
+        "root_causes": [],
         "scenarios": [],
         "affected_refineries": [],
         "affected_routes": [],

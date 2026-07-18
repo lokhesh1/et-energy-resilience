@@ -93,19 +93,21 @@ def _collect_block_flags(state: EnergyIntelligenceBoard) -> list[dict]:
 
 def _escalation_level(gap: float, residual: float, covers_gap: bool,
                       critical_count: int, stressed_count: int,
-                      top_risk_score: float = 0.0) -> str:
+                      top_risk_score: float = 0.0,
+                      assessment_failed: bool = False) -> str:
     """Deterministic severity dial. An UNCOVERED shortfall is the worst case and
     always reads 'critical' — this is what makes COORD-01 (no all-clear over an
     open gap) hold by construction. Elevated corridor risk with no projected
     shortfall reads 'watch', never 'routine' — tension short of disruption is
-    still not an all-clear."""
+    still not an all-clear. A FAILED risk assessment reads 'watch' at minimum:
+    an unassessed world is unknown, not calm (debugger.md #21)."""
     if residual > _TOL or (gap > 0 and not covers_gap):
         return "critical"
     if critical_count > 0:
         return "critical"
     if stressed_count > 0 or gap > 0:
         return "elevated"
-    if top_risk_score >= _WATCH_RISK_THRESHOLD:
+    if top_risk_score >= _WATCH_RISK_THRESHOLD or assessment_failed:
         return "watch"
     return "routine"
 
@@ -136,6 +138,53 @@ def _committed_actions(mix: dict) -> list[dict]:
     return actions
 
 
+def _merge_root_causes(gri_groups: list[dict], routes: list[dict],
+                       drivers: list[dict]) -> list[dict]:
+    """One causal story per origin corridor. Two independent sources:
+
+      * GRI's evidence-judged groups — reporting explicitly links several
+        corridors to one underlying event (via "evidence");
+      * the twin's OVERLOADED reroute edges — volume diverted away from a
+        disrupted corridor materially pressuring the alternative route
+        (via "reroute_overloaded", fully deterministic).
+
+    An origin must be a disrupted corridor (a gap story needs a cause that is
+    actually costing something); groups are ordered by the origin's share of
+    the gap so the narrative leads with the event costing the most."""
+    driver_ids = {d["corridor"] for d in drivers}
+    contrib = {d["corridor"]: d["gap_contribution_mbd"] for d in drivers}
+    groups: dict[str, dict] = {}
+
+    for g in gri_groups or []:
+        origin = g.get("origin")
+        if origin not in driver_ids:
+            continue
+        driven = [{"corridor": c, "via": ["evidence"]}
+                  for c in (g.get("driven") or []) if c != origin]
+        if not driven:
+            continue
+        groups[origin] = {"origin": origin, "driven": driven,
+                          "reasoning": g.get("reasoning", ""),
+                          "key_signals": g.get("key_signals", [])}
+
+    for r in routes or []:
+        frm, to = r.get("from_corridor"), r.get("to_corridor")
+        if not frm or not to or frm == to or not r.get("overloaded"):
+            continue
+        if frm not in driver_ids:
+            continue
+        g = groups.setdefault(frm, {"origin": frm, "driven": [],
+                                    "reasoning": "", "key_signals": []})
+        d = next((d for d in g["driven"] if d["corridor"] == to), None)
+        if d is None:
+            g["driven"].append({"corridor": to, "via": ["reroute_overloaded"]})
+        elif "reroute_overloaded" not in d["via"]:
+            d["via"].append("reroute_overloaded")
+
+    return sorted(groups.values(),
+                  key=lambda g: contrib.get(g["origin"], 0.0), reverse=True)
+
+
 def _spr_bridge(residual: float, scenarios: list[dict]) -> dict | None:
     """Size an SPR drawdown against the residual gap the market mix leaves open
     (best-effort — None on any failure, the plan just omits the bridge). The
@@ -163,10 +212,16 @@ def _spr_bridge(residual: float, scenarios: list[dict]) -> dict | None:
 def _priority_actions(escalation: str, residual: float, actions: list[dict],
                       disrupted: list[str], block_flags: list[dict],
                       spr_bridge: dict | None = None,
-                      watch_risks: list[dict] | None = None) -> list[str]:
+                      watch_risks: list[dict] | None = None,
+                      assessment_failed: bool = False) -> list[str]:
     """Human-readable next steps, deterministic from the plan. Ordered by urgency:
     the uncovered gap first, then the cargoes to secure, then what to watch."""
     out: list[str] = []
+    if assessment_failed:
+        out.append(
+            "Re-run the board: corridor risk scoring FAILED this run — the "
+            "zero-shortfall figures are unassessed defaults, not verified calm."
+        )
     if residual > _TOL:
         msg = (
             f"UNCOVERED: {round(residual, 3)} mbd of the shortfall is not met by "
@@ -238,6 +293,13 @@ def _build_response_plan(state: EnergyIntelligenceBoard,
         if float(c.get("disruption_fraction", 0.0) or 0.0) > 0.0
     ]
 
+    # A run whose scorecard came back empty is a FAILED assessment, never a calm
+    # world. The GRI node sets the flag; the fallback inference (articles present
+    # but zero corridors scored) covers states produced before the flag existed.
+    assessment_failed = bool(state.get("assessment_failed")) or (
+        not corridor_risk and len(state.get("risk_signals", []) or []) > 0
+    )
+
     # Top corridor risks, strongest first (score may be a float or a dict).
     def _score(v):
         return float(v.get("score", v) if isinstance(v, dict) else v)
@@ -248,6 +310,30 @@ def _build_response_plan(state: EnergyIntelligenceBoard,
         key=lambda r: r["score"], reverse=True,
     )[:3]
 
+    # Disruption drivers: every disrupted corridor with its CONTRIBUTION to the
+    # gap (from the twin's decomposition), ordered by impact — the narrative must
+    # attribute the shortfall to the corridors causing it, not crown the corridor
+    # with the loudest risk score (debugger.md #20: a 0.95-risk corridor with a
+    # small India share must not take credit for a gap a 0.85-risk Hormuz drove).
+    shortfall_by_corridor = twin.get("shortfall_by_corridor", {}) or {}
+    drivers = sorted(
+        ({
+            "corridor":             c.get("id"),
+            "disruption_fraction":  round(float(c.get("disruption_fraction", 0.0) or 0.0), 3),
+            "gap_contribution_mbd": round(float(shortfall_by_corridor.get(c.get("id"), 0.0) or 0.0), 4),
+            "risk_score":           round(_score(corridor_risk.get(c.get("id"), 0.0)), 4),
+            "event_type":           corridor_events.get(c.get("id"), "none"),
+        } for c in (twin.get("corridors", []) or [])
+          if float(c.get("disruption_fraction", 0.0) or 0.0) > 0.0),
+        key=lambda d: (d["gap_contribution_mbd"], d["disruption_fraction"]),
+        reverse=True,
+    )
+
+    # Root-cause grouping: which of those drivers are ONE event (origin +
+    # knock-on), from GRI's evidence judgment + the twin's overloaded reroutes.
+    root_causes = _merge_root_causes(state.get("root_causes") or [],
+                                     twin.get("routes") or [], drivers)
+
     actions = _committed_actions(mix)
     watch_risks = [r for r in top_risks if r["score"] >= _WATCH_RISK_THRESHOLD]
     escalation = _escalation_level(
@@ -255,6 +341,7 @@ def _build_response_plan(state: EnergyIntelligenceBoard,
         int(twin.get("critical_count", 0) or 0),
         int(twin.get("stressed_count", 0) or 0),
         top_risk_score=top_risks[0]["score"] if top_risks else 0.0,
+        assessment_failed=assessment_failed,
     )
     spr_bridge = _spr_bridge(residual, state.get("scenarios", []) or [])
 
@@ -266,6 +353,8 @@ def _build_response_plan(state: EnergyIntelligenceBoard,
         "escalation_level": escalation,
         "situation": {
             "top_corridor_risks":  top_risks,
+            "disruption_drivers":  drivers,
+            "root_causes":         root_causes,
             "scenarios_modelled":  len(state.get("scenarios", []) or []),
             "gap_mbd":             gap,
             "critical_refineries": critical,
@@ -275,6 +364,7 @@ def _build_response_plan(state: EnergyIntelligenceBoard,
             # means the run was BLIND — an all-clear must be caveated, because
             # "no disruption found" and "no evidence looked at" are not the same.
             "news_articles":       len(state.get("risk_signals", []) or []),
+            "assessment_failed":   assessment_failed,
         },
         "procurement": {
             "covered_mbd":       covered,
@@ -287,7 +377,8 @@ def _build_response_plan(state: EnergyIntelligenceBoard,
         },
         "priority_actions": _priority_actions(escalation, residual, actions,
                                               disrupted, block_flags, spr_bridge,
-                                              watch_risks=watch_risks),
+                                              watch_risks=watch_risks,
+                                              assessment_failed=assessment_failed),
         "unresolved_issues": unresolved,
         "generated_at": now,
     }
@@ -301,6 +392,17 @@ def _template_recommendation(plan: dict) -> str:
     sit = plan["situation"]
     proc = plan["procurement"]
     esc = plan["escalation_level"].upper()
+
+    # A failed assessment outranks everything else the plan could say: with no
+    # scorecard, every downstream figure is an unassessed default. Saying
+    # "corridors nominal" here is the exact silent failure of debugger.md #21.
+    if sit.get("assessment_failed"):
+        return (f"{esc}: RISK ASSESSMENT UNAVAILABLE — corridor risk scoring "
+                f"returned no usable scorecard this run despite "
+                f"{sit.get('news_articles', 0)} news article(s) retrieved. "
+                f"The zero-shortfall figures are unassessed defaults, NOT an "
+                f"all-clear. Re-run the board; until then treat the last "
+                f"successful run / live twin as the current picture.")
 
     if sit["gap_mbd"] <= 0:
         # A blind run (zero news articles) must never hand out a confident
@@ -322,9 +424,52 @@ def _template_recommendation(plan: dict) -> str:
         return (f"{esc}: No India-bound crude shortfall projected. "
                 f"Corridors nominal; no procurement action required.{caveat}")
 
-    lead = sit["top_corridor_risks"][0] if sit["top_corridor_risks"] else None
-    driver = (f"{lead['corridor']} ({lead['event_type']}, risk {lead['score']})"
-              if lead else "corridor disruption")
+    # Attribute the gap to the corridors CAUSING it (impact-ordered, all of
+    # them), not to the single loudest risk score — a multi-corridor crisis
+    # narrated as one corridor hides the dominant cause (debugger.md #20).
+    # When a root-cause group links the drivers, tell it as ONE event: origin
+    # first, knock-on effects named as consequences, independents kept apart.
+    def _driver_phrase(d: dict) -> str:
+        p = f"{d['corridor']} ({d['event_type']}, risk {d['risk_score']}"
+        if d.get("gap_contribution_mbd"):
+            p += f", ~{d['gap_contribution_mbd']} mbd of the gap"
+        return p + ")"
+
+    drivers = sit.get("disruption_drivers") or []
+    groups = sit.get("root_causes") or []
+    contrib = {d["corridor"]: d for d in drivers}
+    if drivers and groups:
+        primary = groups[0]
+        origin_d = contrib.get(primary["origin"])
+        origin_ph = _driver_phrase(origin_d) if origin_d else primary["origin"]
+        covered = {primary["origin"]}
+        knock: list[str] = []
+        for d in primary.get("driven", []):
+            cid = d["corridor"]
+            covered.add(cid)
+            cd = contrib.get(cid)
+            if cd and cd.get("gap_contribution_mbd"):
+                knock.append(f"{cid} (~{cd['gap_contribution_mbd']} mbd)")
+            elif "reroute_overloaded" in (d.get("via") or []):
+                knock.append(f"{cid} (reroute congestion)")
+            else:
+                knock.append(cid)
+        driver = (f"root cause {origin_ph} driving knock-on pressure on "
+                  f"{', '.join(knock)}")
+        rest = [d for d in drivers if d["corridor"] not in covered]
+        if rest:
+            driver += "; independent: " + " + ".join(
+                _driver_phrase(d) for d in rest[:2])
+            if len(rest) > 2:
+                driver += f" + {len(rest) - 2} more"
+    elif drivers:
+        driver = " + ".join(_driver_phrase(d) for d in drivers[:3])
+        if len(drivers) > 3:
+            driver += f" + {len(drivers) - 3} more disrupted corridor(s)"
+    else:
+        lead = sit["top_corridor_risks"][0] if sit["top_corridor_risks"] else None
+        driver = (f"{lead['corridor']} ({lead['event_type']}, risk {lead['score']})"
+                  if lead else "corridor disruption")
     crit = (f" {len(sit['critical_refineries'])} refinery(ies) critical."
             if sit["critical_refineries"] else "")
 

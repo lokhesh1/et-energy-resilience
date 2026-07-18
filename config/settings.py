@@ -26,6 +26,10 @@ CHAT_HISTORY_TURNS  = 8   # max turns kept in any chat LLM prompt (working-memor
 # ── News / data sources ──
 NEWSAPI_KEY = os.getenv("NEWSAPI_KEY")   # NewsData.io key (pub_...)
 EIA_API_KEY = os.getenv("EIA_API_KEY")
+# Each news sub-request (the NewsData sweep, or one per-corridor GDELT search) is
+# cached this long, so the twin loop's tick and back-to-back board runs reuse
+# articles instead of burning quota (NewsData free tier ≈ 200 credits/day).
+NEWS_CACHE_TTL = int(os.getenv("NEWS_CACHE_TTL", "900"))  # seconds
 
 # ── Observability ──
 LANGSMITH_API_KEY  = os.getenv("LANGSMITH_API_KEY")

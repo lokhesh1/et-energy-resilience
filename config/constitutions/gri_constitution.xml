@@ -12,6 +12,10 @@
     Do not produce a corridor risk assessment with zero evidence — minimum 1 news signal
     or corridor data point required per scored corridor.
   </rule>
+  <rule id="GRI-09" severity="block">
+    The scorecard must not be empty: a corridor_risk output naming none of the 8 known
+    corridors is an assessment FAILURE and must never flow downstream as a calm world.
+  </rule>
 
   <!-- Output validity -->
   <rule id="GRI-03" severity="warn">

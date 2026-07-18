@@ -204,14 +204,105 @@ def _render_metrics() -> None:
         display = f"{value} {unit}".strip() if unit else str(value)
         label = item["label"]
         with col:
+            # Labels may wrap to two lines ("Stressed refineries") — reserve two
+            # lines in EVERY tile so values sit on one baseline and tile bottoms
+            # stay even, instead of the row going ragged.
             st.markdown(
-                f'<div style="padding:10px 12px;border-radius:6px;{css}">'
+                f'<div style="padding:10px 12px;border-radius:6px;min-height:80px;{css}">'
                 f'<div style="font-size:11px;font-weight:600;text-transform:uppercase;'
-                f'letter-spacing:.04em;opacity:.7;">{label}</div>'
+                f'letter-spacing:.04em;opacity:.7;line-height:14px;min-height:28px;">'
+                f'{label}</div>'
                 f'<div style="font-size:22px;font-weight:700;margin-top:2px;">'
                 f'{display}</div></div>',
                 unsafe_allow_html=True,
             )
+
+
+def _render_run_warnings() -> None:
+    """Loud surfaces for silent-failure signals: a failed scoring step or the
+    scores-contradict-evidence tripwire must be visible on the Board tab, not
+    buried in the audit chain — and the disrupted corridors are named with their
+    per-corridor share of the gap so the cause is readable at a glance."""
+    summary = st.session_state.get("last_summary")
+    if not summary:
+        return
+    assessment = summary.get("assessment") or {}
+    if assessment.get("failed"):
+        reason = assessment.get("failure_reason") or "no usable scorecard returned"
+        st.error(
+            "Risk scoring FAILED this run — the figures above are unassessed "
+            f"defaults, not an all-clear. Re-run the board. ({reason})"
+        )
+    elif assessment.get("evidence_ignored_corridors"):
+        cids = ", ".join(assessment["evidence_ignored_corridors"])
+        st.warning(
+            f"Scores contradict fresh high-trust evidence for: {cids} — "
+            "verify in Observability → audit trail."
+        )
+    sit = ((summary.get("response_plan") or {}).get("situation") or {})
+    drivers = sit.get("disruption_drivers") or []
+    causes = sit.get("root_causes") or []
+    origin_of = {}
+    for g in causes:
+        for d in g.get("driven", []):
+            origin_of.setdefault(d.get("corridor"), g.get("origin"))
+    # Zero-contribution corridors (disrupted but no refinery depends on them,
+    # e.g. turkish_straits) add noise to an "by impact" line — drop them. If the
+    # twin provided no decomposition at all, keep every name rather than none.
+    shown = [d for d in drivers if d.get("gap_contribution_mbd")] or drivers
+    if shown:
+        parts = [
+            f"**{d['corridor']}** (~{d.get('gap_contribution_mbd', 0)} mbd of the gap, "
+            f"risk {d.get('risk_score', 0)}"
+            + (f", knock-on of {origin_of[d['corridor']]}"
+               if d["corridor"] in origin_of else "")
+            + ")"
+            for d in shown
+        ]
+        st.markdown("Disrupted corridors by impact: " + " · ".join(parts))
+    if causes and causes[0].get("reasoning"):
+        st.caption(f"Root cause — {causes[0]['origin']}: {causes[0]['reasoning']}")
+
+
+def _render_news_sources() -> None:
+    """The 'News evidence' tile made inspectable: clickable sources + the
+    per-corridor evidence coverage (a 0 = unverified this run, not calm)."""
+    summary = st.session_state.get("last_summary")
+    if not summary:
+        return
+    news = summary.get("news_evidence") or {}
+    articles = news.get("articles") or []
+    count = news.get("article_count", 0)
+    with st.expander(f"News evidence — {count} articles (click to inspect sources)"):
+        by_corridor = news.get("by_corridor") or {}
+        if by_corridor:
+            nonzero = [f"{c}: {n}" for c, n in
+                       sorted(by_corridor.items(), key=lambda kv: -kv[1]) if n]
+            zero = sorted(c for c, n in by_corridor.items() if not n)
+            if nonzero:
+                st.caption("Evidence per corridor — " + " · ".join(nonzero))
+            if zero:
+                st.caption("No articles retrieved this run for: " + ", ".join(zero)
+                           + " — unverified, not confirmed calm.")
+        if not articles:
+            st.caption("No articles retrieved — this assessment is baseline-only, "
+                       "low confidence.")
+        for a in articles:
+            title = a.get("title") or "(untitled)"
+            url = a.get("url") or ""
+            line = f"[{title}]({url})" if url else title
+            meta = f" — {a.get('source', 'unknown')}"
+            trust = a.get("trust_score")
+            if a.get("trust_rated") is False:
+                # No rating ≠ verified-bad: don't print a number that reads
+                # like a real (dis)trust judgement.
+                meta += " · unrated source"
+            elif trust is not None:
+                meta += f" · trust {float(trust):.2f}"
+            tags = a.get("corridors") or []
+            if tags:
+                meta += f" · {', '.join(tags)}"
+            st.markdown(f"- {line}{meta}")
 
 
 def _render_mix_table() -> None:
@@ -338,6 +429,8 @@ def main() -> None:
         with left:
             _render_map()
             _render_metrics()
+            _render_run_warnings()
+            _render_news_sources()
             _render_mix_table()
             _render_priority_actions()
         with right:

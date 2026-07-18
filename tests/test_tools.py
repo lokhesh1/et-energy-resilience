@@ -99,6 +99,16 @@ def _make_mock_response(json_data):
     return mock
 
 
+@pytest.fixture(autouse=True)
+def _stub_gnews(monkeypatch):
+    """Google News RSS is the third live source inside fetch_news; stub it
+    empty by default so the older two-source tests stay deterministic.
+    gnews-specific tests configure this mock directly."""
+    mock = AsyncMock(return_value=[])
+    monkeypatch.setattr("tools.news_fetcher._fetch_gnews", mock)
+    return mock
+
+
 @patch("tools.news_fetcher._fetch_newsapi", new_callable=AsyncMock)
 @patch("tools.news_fetcher._fetch_gdelt", new_callable=AsyncMock)
 def test_fetch_news_ok_schema(mock_gdelt, mock_newsapi):
@@ -152,12 +162,13 @@ def test_fetch_news_degraded_one_source_fails(mock_gdelt, mock_newsapi):
 
 @patch("tools.news_fetcher._fetch_newsapi", new_callable=AsyncMock)
 @patch("tools.news_fetcher._fetch_gdelt", new_callable=AsyncMock)
-def test_fetch_news_failed_both_sources_fail(mock_gdelt, mock_newsapi):
+def test_fetch_news_failed_all_sources_fail(mock_gdelt, mock_newsapi, _stub_gnews):
     mock_newsapi.side_effect = Exception("NewsAPI down")
     mock_gdelt.side_effect = Exception("GDELT down")
+    _stub_gnews.side_effect = Exception("gnews down")
     result = fetch_news("oil", api_key="test-key")
     assert result["status"] == "failed"
-    assert len(result["data"]["errors"]) == 2
+    assert len(result["data"]["errors"]) == 3   # newsapi + gdelt agg + gnews agg
     assert result["data"]["articles"] == []
 
 
@@ -561,3 +572,299 @@ def test_search_query_multiple_corridors_parenthesized_or():
 def test_search_query_empty_query_never_blank():
     assert build_search_query("") == _DEFAULT_SEARCH_QUERY
     assert build_search_query(None) == _DEFAULT_SEARCH_QUERY
+
+
+# ── route_corridors + per-corridor GDELT fan-out ──────────────────────────────
+# Every corridor gets its own evidence slots (free GDELT search per corridor);
+# NewsData stays at ONE request per fetch (quota). Articles carry corridor tags,
+# duplicates dedupe by URL, and evidence_by_corridor reports zeros honestly.
+
+from tools.news_fetcher import route_corridors
+import tools.news_fetcher as nf
+
+
+def test_route_corridors_named_and_hinted():
+    assert route_corridors("Iran closes the Strait of Hormuz") == ["strait_of_hormuz"]
+    assert "bab_el_mandeb" in route_corridors("houthi attacks on shipping")
+
+
+def test_route_corridors_none_named_returns_empty():
+    assert route_corridors("what is the status of all corridors") == []
+    assert route_corridors("") == []
+
+
+@patch("tools.news_fetcher._fetch_newsapi", new_callable=AsyncMock)
+@patch("tools.news_fetcher._fetch_gdelt", new_callable=AsyncMock)
+def test_fanout_one_gdelt_search_per_corridor(mock_gdelt, mock_newsapi):
+    mock_newsapi.return_value = []
+    mock_gdelt.return_value = []
+    fetch_news("oil", api_key="k", corridors=["strait_of_hormuz", "suez_canal"])
+    assert mock_gdelt.call_count == 2
+    assert mock_newsapi.call_count == 1   # NewsData never fans out (quota)
+
+
+@patch("tools.news_fetcher._fetch_newsapi", new_callable=AsyncMock)
+@patch("tools.news_fetcher._fetch_gdelt", new_callable=AsyncMock)
+def test_fanout_defaults_to_all_corridors(mock_gdelt, mock_newsapi):
+    mock_newsapi.return_value = []
+    mock_gdelt.return_value = []
+    fetch_news("oil", api_key="k")   # no corridors routed → broad monitoring
+    assert mock_gdelt.call_count == len(nf._CORRIDOR_SEARCH)
+
+
+@patch("tools.news_fetcher._fetch_newsapi", new_callable=AsyncMock)
+@patch("tools.news_fetcher._fetch_gdelt", new_callable=AsyncMock)
+def test_fanout_articles_tagged_and_deduped(mock_gdelt, mock_newsapi):
+    mock_newsapi.return_value = []
+    # The SAME url returned by both corridor searches → one article, both tags.
+    mock_gdelt.return_value = [
+        {"title": "Tanker attacked", "url": "https://reuters.com/t", "source": "reuters.com",
+         "published_at": "", "description": "", "origin": "gdelt"}]
+    result = fetch_news("oil", api_key="k",
+                        corridors=["strait_of_hormuz", "suez_canal"])
+    arts = result["data"]["articles"]
+    assert len(arts) == 1
+    assert arts[0]["corridors"] == ["strait_of_hormuz", "suez_canal"]
+
+
+@patch("tools.news_fetcher._fetch_newsapi", new_callable=AsyncMock)
+@patch("tools.news_fetcher._fetch_gdelt", new_callable=AsyncMock)
+def test_newsdata_sweep_articles_get_inferred_tags(mock_gdelt, mock_newsapi):
+    mock_gdelt.return_value = []
+    mock_newsapi.return_value = [
+        {"title": "Suez Canal convoy halted", "url": "https://ft.com/s", "source": "ft.com",
+         "published_at": "", "description": "", "origin": "newsdata"}]
+    result = fetch_news("oil", api_key="k", corridors=["suez_canal"])
+    assert result["data"]["articles"][0]["corridors"] == ["suez_canal"]
+
+
+@patch("tools.news_fetcher._fetch_newsapi", new_callable=AsyncMock)
+@patch("tools.news_fetcher._fetch_gdelt", new_callable=AsyncMock)
+def test_evidence_by_corridor_reports_zeros(mock_gdelt, mock_newsapi):
+    # A searched corridor with no hits must appear with 0 — "unverified this
+    # run" must be distinguishable from "not searched".
+    mock_gdelt.return_value = []
+    mock_newsapi.return_value = [
+        {"title": "Hormuz tension rises", "url": "https://reuters.com/h",
+         "source": "reuters.com", "published_at": "", "description": "",
+         "origin": "newsdata"}]
+    result = fetch_news("oil", api_key="k",
+                        corridors=["strait_of_hormuz", "suez_canal"])
+    evidence = result["data"]["evidence_by_corridor"]
+    assert evidence["strait_of_hormuz"] == 1
+    assert evidence["suez_canal"] == 0
+
+
+@patch("tools.news_fetcher._fetch_newsapi", new_callable=AsyncMock)
+@patch("tools.news_fetcher._fetch_gdelt", new_callable=AsyncMock)
+def test_gdelt_failures_aggregate_to_one_error(mock_gdelt, mock_newsapi):
+    mock_newsapi.return_value = []
+    mock_gdelt.side_effect = Exception("GDELT down")
+    result = fetch_news("oil", api_key="k",
+                        corridors=["strait_of_hormuz", "suez_canal"])
+    assert result["status"] == "degraded"        # NewsData still delivered
+    assert len(result["data"]["errors"]) == 1    # one aggregated gdelt entry
+    assert "2/2" in result["data"]["errors"][0]
+
+
+@patch("tools.news_fetcher._fetch_newsapi", new_callable=AsyncMock)
+@patch("tools.news_fetcher._fetch_gdelt", new_callable=AsyncMock)
+def test_news_cache_prevents_refetch_within_ttl(mock_gdelt, mock_newsapi):
+    mock_newsapi.return_value = []
+    mock_gdelt.return_value = [
+        {"title": "T", "url": "https://reuters.com/c", "source": "reuters.com",
+         "published_at": "", "description": "", "origin": "gdelt"}]
+    r1 = fetch_news("oil", api_key="k", corridors=["strait_of_hormuz"])
+    r2 = fetch_news("oil", api_key="k", corridors=["strait_of_hormuz"])
+    assert mock_gdelt.call_count == 1            # second call served from cache
+    assert mock_newsapi.call_count == 1
+    assert r1["data"]["articles"] == r2["data"]["articles"]
+
+
+@patch("tools.news_fetcher._fetch_newsapi", new_callable=AsyncMock)
+@patch("tools.news_fetcher._fetch_gdelt", new_callable=AsyncMock)
+def test_news_cache_ttl_zero_disables_cache(mock_gdelt, mock_newsapi, monkeypatch):
+    monkeypatch.setattr(nf, "NEWS_CACHE_TTL", 0)
+    mock_newsapi.return_value = []
+    mock_gdelt.return_value = []
+    fetch_news("oil", api_key="k", corridors=["strait_of_hormuz"])
+    fetch_news("oil", api_key="k", corridors=["strait_of_hormuz"])
+    assert mock_gdelt.call_count == 2
+
+
+@patch("tools.news_fetcher._fetch_newsapi", new_callable=AsyncMock)
+@patch("tools.news_fetcher._fetch_gdelt", new_callable=AsyncMock)
+def test_gdelt_429_opens_circuit_breaker(mock_gdelt, mock_newsapi):
+    # First 429 → remaining fan-out skipped AND later fetches back off; every
+    # extra request during a GDELT block extends the block.
+    from unittest.mock import MagicMock
+    resp = MagicMock()
+    resp.status_code = 429
+    mock_newsapi.return_value = []
+    mock_gdelt.side_effect = httpx.HTTPStatusError(
+        "429", request=MagicMock(), response=resp)
+    r = fetch_news("oil", api_key="k",
+                   corridors=["strait_of_hormuz", "suez_canal", "panama_canal"])
+    assert mock_gdelt.call_count == 1        # circuit opened on the first 429
+    assert r["status"] == "degraded"
+    fetch_news("oil", api_key="k", corridors=["strait_of_hormuz"])
+    assert mock_gdelt.call_count == 1        # still backing off — no new request
+
+
+@patch("tools.news_fetcher._fetch_newsapi", new_callable=AsyncMock)
+@patch("tools.news_fetcher._fetch_gdelt", new_callable=AsyncMock)
+def test_news_cache_never_stores_failures(mock_gdelt, mock_newsapi):
+    mock_newsapi.return_value = []
+    mock_gdelt.side_effect = [Exception("boom"), [   # fails once, then recovers
+        {"title": "T", "url": "https://reuters.com/r", "source": "reuters.com",
+         "published_at": "", "description": "", "origin": "gdelt"}]]
+    r1 = fetch_news("oil", api_key="k", corridors=["strait_of_hormuz"])
+    r2 = fetch_news("oil", api_key="k", corridors=["strait_of_hormuz"])
+    assert r1["data"]["articles"] == []
+    assert len(r2["data"]["articles"]) == 1      # retried, not a cached failure
+
+
+# ── Google News RSS (third source) + trust honesty ────────────────────────────
+
+from tools.news_fetcher import _fetch_gnews   # real fn, bound before the stub
+from tools.canary_tokens import tag_article
+
+_GNEWS_RSS = """<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0"><channel><title>q - Google News</title>
+<item>
+  <title>Hormuz tanker halted after strike - Reuters</title>
+  <link>https://news.google.com/rss/articles/abc123</link>
+  <pubDate>Fri, 17 Jul 2026 08:00:00 GMT</pubDate>
+  <source url="https://www.reuters.com">Reuters</source>
+</item>
+</channel></rss>"""
+
+
+def test_fetch_gnews_parses_rss_and_carries_source_domain():
+    from unittest.mock import MagicMock
+    resp = MagicMock()
+    resp.raise_for_status = MagicMock()
+    resp.text = _GNEWS_RSS
+    client = AsyncMock()
+    client.get = AsyncMock(return_value=resp)
+    arts = asyncio.run(_fetch_gnews(client, "q"))
+    assert len(arts) == 1
+    a = arts[0]
+    assert a["origin"] == "gnews"
+    assert a["url"] == "https://news.google.com/rss/articles/abc123"
+    assert a["source_domain"] == "reuters.com"   # outlet, not the redirect host
+    assert "Hormuz tanker halted" in a["title"]
+
+
+def test_tag_article_trust_rated_flag_and_source_domain_override():
+    rated = tag_article({"url": "https://reuters.com/x"})
+    assert rated["trust_rated"] is True and rated["trust_score"] == 0.95
+    unrated = tag_article({"url": "https://smallblog.example/x"})
+    assert unrated["trust_rated"] is False and unrated["trust_score"] == 0.20
+    # Google News redirect link + source_domain → trust of the real outlet.
+    gn = tag_article({"url": "https://news.google.com/rss/articles/abc",
+                      "source_domain": "bbc.com"})
+    assert gn["trust_rated"] is True and gn["trust_score"] == 0.88
+
+
+@patch("tools.news_fetcher._fetch_newsapi", new_callable=AsyncMock)
+@patch("tools.news_fetcher._fetch_gdelt", new_callable=AsyncMock)
+def test_gnews_fans_out_per_corridor(mock_gdelt, mock_newsapi, _stub_gnews):
+    mock_newsapi.return_value = []
+    mock_gdelt.return_value = []
+    fetch_news("oil", api_key="k", corridors=["strait_of_hormuz", "suez_canal"])
+    assert _stub_gnews.call_count == 2
+
+
+# ── Per-article scoring metrics (recency / attribution / corridor aggregates) ──
+
+from tools.news_fetcher import _parse_published, _recency_weight, _attribution_hint
+
+
+def test_parse_published_handles_all_three_feed_formats():
+    assert _parse_published("Fri, 17 Jul 2026 08:00:00 GMT") is not None   # gnews RFC-822
+    assert _parse_published("2026-07-17 08:00:00") is not None             # NewsData
+    assert _parse_published("20260717T080000Z") is not None                # GDELT
+    assert _parse_published("not a date") is None
+    assert _parse_published("") is None
+
+
+def test_recency_weight_bands():
+    assert _recency_weight(0.5) == 1.0        # fresh: full weight
+    assert _recency_weight(3.0) == 1.0
+    assert 0.3 < _recency_weight(8.0) < 1.0   # tapering
+    assert _recency_weight(20.0) == 0.0       # beyond the window
+    assert _recency_weight(None) == 0.5       # unknown date: penalty, not a drop
+
+
+def test_attribution_hint():
+    assert _attribution_hint({"title": "Navy says tanker seized near strait"}) == "attributed"
+    assert _attribution_hint({"title": "Analysis: what the blockade could mean"}) == "analysis"
+    assert _attribution_hint({"title": "Tanker fire in gulf"}) == "unknown"
+
+
+@patch("tools.news_fetcher._fetch_newsapi", new_callable=AsyncMock)
+@patch("tools.news_fetcher._fetch_gdelt", new_callable=AsyncMock)
+def test_old_news_dropped_and_metrics_attached(mock_gdelt, mock_newsapi):
+    from datetime import datetime, timedelta, timezone as tz
+    fresh = (datetime.now(tz.utc) - timedelta(hours=6)).strftime("%Y-%m-%d %H:%M:%S")
+    stale = (datetime.now(tz.utc) - timedelta(days=30)).strftime("%Y-%m-%d %H:%M:%S")
+    mock_gdelt.return_value = []
+    mock_newsapi.return_value = [
+        {"title": "Hormuz strike reported by navy", "url": "https://reuters.com/f",
+         "source": "reuters.com", "published_at": fresh, "description": "",
+         "origin": "newsdata"},
+        {"title": "Old Hormuz story", "url": "https://reuters.com/o",
+         "source": "reuters.com", "published_at": stale, "description": "",
+         "origin": "newsdata"},
+    ]
+    result = fetch_news("oil", api_key="k", corridors=["strait_of_hormuz"])
+    arts = result["data"]["articles"]
+    assert len(arts) == 1                       # >14d news ignored outright
+    a = arts[0]
+    assert a["age_days"] < 1 and a["recency_weight"] == 1.0
+    assert a["attribution"] == "attributed"     # "navy", "reported"
+
+
+@patch("tools.news_fetcher._fetch_newsapi", new_callable=AsyncMock)
+@patch("tools.news_fetcher._fetch_gdelt", new_callable=AsyncMock)
+def test_corridor_evidence_aggregates(mock_gdelt, mock_newsapi):
+    from datetime import datetime, timedelta, timezone as tz
+    fresh = (datetime.now(tz.utc) - timedelta(hours=6)).strftime("%Y-%m-%d %H:%M:%S")
+    mock_gdelt.return_value = []
+    mock_newsapi.return_value = [
+        {"title": "Hormuz blockade confirmed", "url": "https://reuters.com/1",
+         "source": "reuters.com", "published_at": fresh, "description": "",
+         "origin": "newsdata"},
+        {"title": "Hormuz shipping halted, officials say", "url": "https://reuters.com/2",
+         "source": "reuters.com", "published_at": fresh, "description": "",
+         "origin": "newsdata"},
+    ]
+    result = fetch_news("oil", api_key="k", corridors=["strait_of_hormuz", "suez_canal"])
+    ce = result["data"]["corridor_evidence"]
+    hormuz = ce["strait_of_hormuz"]
+    assert hormuz["articles"] == 2
+    assert hormuz["independent_domains"] == 1   # syndication ≠ independent sources
+    assert hormuz["fresh_72h"] == 2
+    assert hormuz["top_trust"] == 0.95
+    assert hormuz["evidence_weight"] == 1.9     # 2 × (0.95 trust × 1.0 recency)
+    assert ce["suez_canal"]["articles"] == 0    # zero-aggregate present (unverified)
+
+
+@patch("tools.news_fetcher._fetch_newsapi", new_callable=AsyncMock)
+@patch("tools.news_fetcher._fetch_gdelt", new_callable=AsyncMock)
+def test_same_story_across_sources_deduped_by_title(mock_gdelt, mock_newsapi,
+                                                    _stub_gnews):
+    # Same story, different URLs (Google links are redirects) → one article.
+    mock_newsapi.return_value = []
+    mock_gdelt.return_value = [
+        {"title": "Hormuz tanker halted", "url": "https://reuters.com/a",
+         "source": "reuters.com", "published_at": "", "description": "",
+         "origin": "gdelt"}]
+    _stub_gnews.return_value = [
+        {"title": "  Hormuz  Tanker Halted ", "url": "https://news.google.com/x",
+         "source": "reuters.com", "source_domain": "reuters.com",
+         "published_at": "", "description": "", "origin": "gnews"}]
+    result = fetch_news("oil", api_key="k", corridors=["strait_of_hormuz"])
+    assert len(result["data"]["articles"]) == 1
+    assert result["data"]["evidence_by_corridor"]["strait_of_hormuz"] == 1

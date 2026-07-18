@@ -448,7 +448,55 @@ def test_summarize_final_reports_news_evidence():
                 "audit_trail": [{"agent": "gri_agent", "action": "tool_fetch",
                                  "news_status": "ok"}]}
     out2 = summarize_final(informed)
-    assert out2["news_evidence"] == {"article_count": 2, "news_status": "ok"}
+    assert out2["news_evidence"]["article_count"] == 2
+    assert out2["news_evidence"]["news_status"] == "ok"
+
+
+def test_summarize_final_news_evidence_carries_inspectable_sources():
+    """An article COUNT the user can't open is not evidence: the summary must
+    carry a capped, corridor-balanced sample with title/url/source/trust."""
+    signals = (
+        [{"title": f"Hormuz {i}", "url": f"https://reuters.com/h{i}",
+          "source": "reuters.com", "trust_score": 0.95,
+          "corridors": ["strait_of_hormuz"]} for i in range(20)]
+        + [{"title": "Suez update", "url": "https://ft.com/s1", "source": "ft.com",
+            "trust_score": 0.90, "corridors": ["suez_canal"]}]
+    )
+    informed = {**_FINAL, "risk_signals": signals,
+                "audit_trail": [{"agent": "gri_agent", "action": "tool_fetch",
+                                 "news_status": "ok",
+                                 "evidence_by_corridor": {"strait_of_hormuz": 20,
+                                                          "suez_canal": 1,
+                                                          "panama_canal": 0}}]}
+    news = summarize_final(informed)["news_evidence"]
+    arts = news["articles"]
+    assert len(arts) == 12                                  # capped
+    assert {"title", "url", "source", "trust_score", "corridors"} <= set(arts[0])
+    # corridor-balanced: the single Suez article survives 20 Hormuz ones
+    assert any("suez_canal" in a["corridors"] for a in arts)
+    # per-corridor coverage, zeros included (unverified ≠ calm)
+    assert news["by_corridor"]["panama_canal"] == 0
+
+
+def test_evidence_articles_trust_sorted_tagged_before_untagged():
+    """A Reuters article at fetch position 15 must not lose its display slot to
+    an unrated market wrap-up at position 1; untagged sweep noise goes last."""
+    from api.summary import _evidence_articles
+    signals = (
+        [{"title": f"noise{i}", "url": f"https://x{i}.example/a", "source": f"x{i}",
+          "trust_score": 0.2, "trust_rated": False, "corridors": []}
+         for i in range(12)]
+        + [{"title": "wrap", "url": "https://y.example/w", "source": "y",
+            "trust_score": 0.2, "trust_rated": False,
+            "corridors": ["strait_of_hormuz"]},
+           {"title": "reuters piece", "url": "https://reuters.com/r",
+            "source": "reuters.com", "trust_score": 0.95, "trust_rated": True,
+            "corridors": ["strait_of_hormuz"]}]
+    )
+    arts = _evidence_articles(signals, cap=12)
+    assert arts[0]["source"] == "reuters.com"   # highest trust first in bucket
+    assert arts[1]["title"] == "wrap"           # tagged before any untagged
+    assert arts[0]["trust_rated"] is True       # rating flag carried to the UI
 
 
 def test_metrics_include_news_evidence_tone():
@@ -526,3 +574,65 @@ def test_map_view_feature_counts():
     assert counts["refinery"] == 1
     assert feature_counts({}) == {}
     assert feature_counts(None) == {}
+
+
+# ── Assessment status surfaces (debugger.md #21) ──────────────────────────────
+
+def test_summary_carries_assessment_failure():
+    final = {
+        "assessment_failed": True,
+        "audit_trail": [{"agent": "gri_agent", "action": "llm_assessment",
+                         "llm_failure": "APIError: 502", "assessment_failed": True}],
+    }
+    s = summarize_final(final)
+    assert s["assessment"]["failed"] is True
+    assert "502" in s["assessment"]["failure_reason"]
+
+
+def test_summary_carries_evidence_ignored_corridors():
+    final = {"audit_trail": [{"agent": "gri_agent",
+                              "action": "evidence_ignored_warning",
+                              "corridors": {"strait_of_hormuz": {},
+                                            "bab_el_mandeb": {}}}]}
+    s = summarize_final(final)
+    assert s["assessment"]["evidence_ignored_corridors"] == [
+        "bab_el_mandeb", "strait_of_hormuz"]
+    assert s["assessment"]["failed"] is False
+
+
+def test_metrics_flag_failed_risk_scoring_first():
+    summary = {"assessment": {"failed": True}, "response_plan": {},
+               "twin_summary": {}, "news_evidence": {"article_count": 157}}
+    comps = build_components(summary, {})
+    metrics = next(c for c in comps if c["type"] == "metrics")
+    first = metrics["items"][0]
+    assert first["label"] == "Risk scoring"
+    assert first["value"] == "FAILED"
+    assert first["tone"] == "critical"
+
+
+def test_metrics_count_disrupted_corridors():
+    summary = {"response_plan": {"situation": {"disruption_drivers": [
+                   {"corridor": "strait_of_hormuz", "gap_contribution_mbd": 1.77},
+                   {"corridor": "bab_el_mandeb", "gap_contribution_mbd": 0.55}]}},
+               "twin_summary": {}, "news_evidence": {}}
+    comps = build_components(summary, {})
+    metrics = next(c for c in comps if c["type"] == "metrics")
+    tile = next(it for it in metrics["items"] if it["label"] == "Disrupted corridors")
+    assert tile["value"] == 2
+    assert tile["tone"] == "critical"
+
+
+def test_follow_up_duration_chip_uses_top_impact_corridor():
+    # bab has the higher SCORE, hormuz the higher IMPACT — the chip must follow impact
+    summary = {
+        "response_plan": {"situation": {"disruption_drivers": [
+            {"corridor": "strait_of_hormuz", "gap_contribution_mbd": 1.77},
+            {"corridor": "bab_el_mandeb", "gap_contribution_mbd": 0.55}]},
+            "procurement": {}},
+        "twin_summary": {"total_india_shortfall_mbd": 2.44, "critical_count": 12},
+        "corridor_risk": {"bab_el_mandeb": 0.95, "strait_of_hormuz": 0.85},
+    }
+    ups = suggest_follow_ups(summary)
+    assert any("strait_of_hormuz disruption lasts twice as long" in u for u in ups)
+    assert not any("bab_el_mandeb disruption lasts twice" in u for u in ups)

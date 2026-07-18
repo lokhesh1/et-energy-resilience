@@ -299,3 +299,150 @@ def test_clean_plan_passes_all_rules():
     res = _check(_plan())
     assert res["passed"]
     assert res["violations"] == []
+
+
+# ── Assessment failure: an unassessed world is never "routine" (dbg #21) ────────
+
+def test_failed_assessment_never_reads_routine():
+    state = _state(gap=0.0, covered=0.0, covers_gap=True, critical=0,
+                   components=[], disrupted=False)
+    state["corridor_risk"] = {}
+    state["risk_signals"] = [{"title": "Hormuz blockade continues"}] * 3
+    state["assessment_failed"] = True
+    out = _run_node(state)
+    plan = out["response_plan"]
+    assert plan["escalation_level"] == "watch"
+    assert plan["situation"]["assessment_failed"] is True
+    rec = out["final_recommendation"]
+    assert "RISK ASSESSMENT UNAVAILABLE" in rec
+    assert "nominal" not in rec.lower()
+    assert any("FAILED" in a for a in plan["priority_actions"])
+
+
+def test_failed_assessment_inferred_from_empty_scorecard_with_articles():
+    # states produced before the flag existed: articles present, zero corridors
+    # scored — the coordinator must infer the failure rather than trust calm
+    state = _state(gap=0.0, covered=0.0, covers_gap=True, critical=0,
+                   components=[], disrupted=False)
+    state["corridor_risk"] = {}
+    state["risk_signals"] = [{"title": "x"}]
+    out = _run_node(state)
+    assert out["response_plan"]["situation"]["assessment_failed"] is True
+    assert out["response_plan"]["escalation_level"] == "watch"
+
+
+def test_successful_run_is_not_marked_failed():
+    out = _run_node(_state(gap=1.0, covered=1.0, critical=1))
+    assert out["response_plan"]["situation"]["assessment_failed"] is False
+    assert "RISK ASSESSMENT UNAVAILABLE" not in out["final_recommendation"]
+
+
+# ── Impact attribution: the gap belongs to the corridors causing it (dbg #20) ──
+
+def test_multi_corridor_gap_attributed_by_impact_not_score():
+    """The top-SCORE corridor (bab 0.95) must not take sole credit for a gap the
+    top-IMPACT corridor (hormuz 0.85, ~72% of the shortfall) actually drove —
+    the exact silent misattribution of the 2026-07-18 screenshot."""
+    state = _state(gap=2.4453, covered=2.4453, critical=12)
+    state["corridor_risk"] = {"bab_el_mandeb": 0.95, "strait_of_hormuz": 0.85}
+    state["corridor_events"] = {"bab_el_mandeb": "war_conflict",
+                                "strait_of_hormuz": "war_conflict"}
+    state["twin_state"]["corridors"] = [
+        {"id": "bab_el_mandeb", "disruption_fraction": 1.0},
+        {"id": "strait_of_hormuz", "disruption_fraction": 1.0},
+    ]
+    state["twin_state"]["shortfall_by_corridor"] = {
+        "strait_of_hormuz": 1.7685, "bab_el_mandeb": 0.5505}
+    out = _run_node(state)
+    drivers = out["response_plan"]["situation"]["disruption_drivers"]
+    assert [d["corridor"] for d in drivers] == ["strait_of_hormuz", "bab_el_mandeb"]
+    rec = out["final_recommendation"]
+    assert "strait_of_hormuz" in rec and "bab_el_mandeb" in rec
+    assert rec.index("strait_of_hormuz") < rec.index("bab_el_mandeb")
+    assert "1.7685" in rec              # the dominant contribution is stated
+
+
+def test_single_driver_narrative_unchanged_without_decomposition():
+    # no shortfall_by_corridor in the twin (older snapshot) → still names the
+    # disrupted corridor, score-led fallback, no crash
+    out = _run_node(_state(gap=1.0, covered=1.0, critical=1))
+    assert "strait_of_hormuz" in out["final_recommendation"]
+
+
+# ── Root-cause grouping: one event, origin + knock-on ──────────────────────────
+
+def _grouped_state():
+    state = _state(gap=2.4453, covered=2.4453, critical=12)
+    state["corridor_risk"] = {"bab_el_mandeb": 0.95, "strait_of_hormuz": 0.85,
+                              "suez_canal": 0.7}
+    state["corridor_events"] = {"bab_el_mandeb": "war_conflict",
+                                "strait_of_hormuz": "war_conflict",
+                                "suez_canal": "political_tension"}
+    state["twin_state"]["corridors"] = [
+        {"id": "bab_el_mandeb", "disruption_fraction": 1.0},
+        {"id": "strait_of_hormuz", "disruption_fraction": 1.0},
+        {"id": "suez_canal", "disruption_fraction": 0.42},
+    ]
+    state["twin_state"]["shortfall_by_corridor"] = {
+        "strait_of_hormuz": 1.7685, "bab_el_mandeb": 0.5505,
+        "suez_canal": 0.0901}
+    return state
+
+
+def test_root_cause_group_merges_evidence_and_overloaded_reroutes():
+    state = _grouped_state()
+    state["root_causes"] = [{"origin": "strait_of_hormuz",
+                             "driven": ["bab_el_mandeb"],
+                             "reasoning": "same regional conflict",
+                             "key_signals": []}]
+    state["twin_state"]["routes"] = [
+        {"from_corridor": "strait_of_hormuz", "to_corridor": "cape_of_good_hope",
+         "overloaded": True},
+        # NOT overloaded → no material knock-on, must not create a group
+        {"from_corridor": "bab_el_mandeb", "to_corridor": "cape_of_good_hope",
+         "overloaded": False},
+    ]
+    out = _run_node(state)
+    rc = out["response_plan"]["situation"]["root_causes"]
+    assert len(rc) == 1
+    assert rc[0]["origin"] == "strait_of_hormuz"
+    driven = {d["corridor"]: d["via"] for d in rc[0]["driven"]}
+    assert "evidence" in driven["bab_el_mandeb"]
+    assert "reroute_overloaded" in driven["cape_of_good_hope"]
+
+    rec = out["final_recommendation"]
+    assert "root cause" in rec.lower()
+    assert rec.lower().index("strait_of_hormuz") < rec.lower().index("bab_el_mandeb")
+    assert "reroute congestion" in rec           # cape named as a consequence
+    assert "independent" in rec.lower()          # suez stays outside the group
+    assert "suez_canal" in rec
+
+
+def test_reroute_only_group_forms_without_gri_judgment():
+    state = _grouped_state()
+    state["twin_state"]["routes"] = [
+        {"from_corridor": "strait_of_hormuz", "to_corridor": "cape_of_good_hope",
+         "overloaded": True}]
+    out = _run_node(state)
+    rc = out["response_plan"]["situation"]["root_causes"]
+    assert rc and rc[0]["origin"] == "strait_of_hormuz"
+    assert rc[0]["driven"][0]["via"] == ["reroute_overloaded"]
+    assert "root cause" in out["final_recommendation"].lower()
+
+
+def test_no_grouping_keeps_flat_impact_attribution():
+    out = _run_node(_grouped_state())     # no groups, no routes
+    assert out["response_plan"]["situation"]["root_causes"] == []
+    rec = out["final_recommendation"]
+    assert "root cause" not in rec.lower()
+    assert "strait_of_hormuz" in rec and "bab_el_mandeb" in rec
+
+
+def test_group_with_undisrupted_origin_is_ignored():
+    # GRI groups on a corridor the twin does NOT show disrupted → not a gap story
+    state = _grouped_state()
+    state["root_causes"] = [{"origin": "panama_canal",
+                             "driven": ["strait_of_hormuz"],
+                             "reasoning": "", "key_signals": []}]
+    out = _run_node(state)
+    assert out["response_plan"]["situation"]["root_causes"] == []

@@ -206,3 +206,31 @@ def test_missing_constitution_returns_passed_with_warning():
     result = check("nonexistent_agent", {"foo": "bar"})
     assert result["passed"] is True
     assert "warning" in result
+
+
+# ── GRI-09: the scorecard must not be empty of known corridors ────────────────
+
+def test_gri09_empty_scorecard_blocks():
+    out = _good_output()
+    out["corridor_risk"] = {}
+    result = check("gri", out)
+    assert "GRI-09" in _rule_ids(result)
+    assert result["passed"] is False
+
+
+def test_gri09_unknown_only_scorecard_blocks():
+    out = _good_output()
+    out["corridor_risk"] = {"Strait of Hormuz": _corridor_entry(0.9)}
+    result = check("gri", out)
+    assert "GRI-09" in _rule_ids(result)
+
+
+def test_gri09_not_checked_on_tool_fetch_payload():
+    # the tool-output check carries no corridor_risk key — it is not an assessment
+    result = check("gri", {"risk_signals": [_good_article()],
+                           "low_trust_signals_flagged": 0})
+    assert "GRI-09" not in _rule_ids(result)
+
+
+def test_gri09_passes_with_known_corridors():
+    assert "GRI-09" not in _rule_ids(check("gri", _good_output()))

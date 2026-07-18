@@ -23,6 +23,10 @@ class EnergyIntelligenceBoard(TypedDict):
     risk_signals: list[dict]
     corridor_risk: dict[str, float]   # corridor_id → risk score
     corridor_events: dict[str, str]   # corridor_id → event_type (drives DSM/decay)
+    assessment_failed: bool           # GRI produced no usable scorecard this run —
+                                      # downstream must NEVER read this as calm
+    root_causes: list[dict]           # evidence-judged causal groups: one event,
+                                      # origin corridor + the corridors it drives
 
     # ── DSM ──
     scenarios: list[dict]

@@ -345,9 +345,18 @@ def test_llm_evidence_count_mismatch_sets_constitution_flags():
 
 
 def test_llm_unknown_corridor_in_output_sets_constitution_flags():
-    # LLM puts an unknown corridor inside corridor_risk → GRI-04 warn
+    # LLM puts an unknown corridor inside corridor_risk (alongside a known one —
+    # an unknown-ONLY scorecard is now a failed assessment, GRI-09) → GRI-04 warn
     bad_llm_out = {
         "corridor_risk": {
+            "strait_of_hormuz": {
+                "score":          0.85,
+                "confidence":     0.9,
+                "evidence_count": 1,
+                "key_signals":    ["Hormuz shipping lanes disrupted"],
+                "reasoning":      "Direct corridor reference.",
+                "event_type":     "war_conflict",
+            },
             "red_sea_new": {
                 "score":          0.60,
                 "confidence":     0.7,
@@ -417,6 +426,116 @@ def test_malformed_json_audit_trail_still_written():
     assert len(result["audit_trail"]) == 2
 
 
+# ── Per-corridor evidence coverage (fan-out honesty) ──────────────────────────
+
+def test_audit_carries_evidence_by_corridor():
+    news = {**MOCK_NEWS_RESULT,
+            "data": {**MOCK_NEWS_RESULT["data"],
+                     "evidence_by_corridor": {"strait_of_hormuz": 3, "suez_canal": 0}}}
+    fetch_p = patch("agents.gri_agent._fetch_tools",
+                    return_value=(news, MOCK_CORRIDOR_RESULT))
+    client_p = patch("agents.gri_agent._client")
+    with fetch_p, client_p as mock_client:
+        mock_client.chat.completions.create.return_value = _make_llm_response(MOCK_LLM_OUTPUT)
+        result = gri_node(MOCK_STATE)
+
+    entry = next(e for e in result["audit_trail"] if e["action"] == "tool_fetch")
+    assert entry["evidence_by_corridor"] == {"strait_of_hormuz": 3, "suez_canal": 0}
+
+
+def test_prompt_marks_zero_evidence_corridors_unverified():
+    from agents.gri_agent import _build_user_prompt
+    p = _build_user_prompt("status?", [], MOCK_CORRIDORS,
+                           {"strait_of_hormuz": 2, "suez_canal": 0})
+    assert "EVIDENCE COVERAGE" in p
+    assert "strait_of_hormuz: 2" in p
+    assert "UNVERIFIED" in p          # 0-article corridors ≠ confirmed calm
+
+
+def test_select_articles_balances_across_corridors():
+    # 40 Hormuz articles must not crowd the single Suez article out of the
+    # LLM's evidence window.
+    from agents.gri_agent import _select_articles
+    arts = ([{"title": f"h{i}", "corridors": ["strait_of_hormuz"]} for i in range(40)]
+            + [{"title": "s0", "corridors": ["suez_canal"]}])
+    sel = _select_articles(arts, cap=10)
+    assert len(sel) == 10
+    assert any("suez_canal" in a["corridors"] for a in sel)
+
+
+def test_select_articles_serves_highest_trust_first():
+    from agents.gri_agent import _select_articles
+    arts = [{"title": "low", "trust_score": 0.2, "corridors": ["strait_of_hormuz"]},
+            {"title": "high", "trust_score": 0.95, "corridors": ["strait_of_hormuz"]},
+            {"title": "untagged-high", "trust_score": 0.95, "corridors": []}]
+    sel = _select_articles(arts, cap=2)
+    # trust order within the bucket, and tagged evidence beats untagged noise
+    assert [a["title"] for a in sel] == ["high", "low"]
+
+
+def test_select_articles_proportional_not_diluted():
+    """A crisis corridor with 26 articles must dominate the judgment window —
+    equal-share balancing diluted the crisis and flipped boards to routine."""
+    from agents.gri_agent import _select_articles
+    arts = ([{"title": f"h{i}", "corridors": ["strait_of_hormuz"]} for i in range(26)]
+            + [{"title": f"p{i}", "corridors": ["panama_canal"]} for i in range(3)]
+            + [{"title": f"s{i}", "corridors": ["suez_canal"]} for i in range(3)])
+    sel = _select_articles(arts, cap=16)
+    hormuz = sum(1 for a in sel if "strait_of_hormuz" in a["corridors"])
+    assert hormuz >= 10                          # crisis dominates the window
+    assert any("panama_canal" in a["corridors"] for a in sel)   # floor keeps
+    assert any("suez_canal" in a["corridors"] for a in sel)     # everyone visible
+
+
+def test_prompt_carries_rich_evidence_metrics():
+    from agents.gri_agent import _build_user_prompt
+    p = _build_user_prompt(
+        "status?", [], MOCK_CORRIDORS,
+        {"strait_of_hormuz": 26},
+        {"strait_of_hormuz": {"articles": 26, "independent_domains": 14,
+                              "fresh_72h": 12, "top_trust": 0.90,
+                              "evidence_weight": 14.2}})
+    assert "14 domains" in p and "12 fresh(72h)" in p and "top trust 0.90" in p
+
+
+def test_prompt_signal_lines_carry_age_and_attribution():
+    from agents.gri_agent import _build_user_prompt
+    arts = [{"title": "Hormuz strike", "source": "reuters.com", "trust_score": 0.95,
+             "age_days": 0.4, "attribution": "attributed",
+             "corridors": ["strait_of_hormuz"]}]
+    p = _build_user_prompt("status?", arts, MOCK_CORRIDORS, {})
+    assert "age 0.4d" in p and "attributed" in p
+
+
+def test_evidence_ignored_warning_in_audit():
+    """Fresh high-trust evidence + baseline LLM score → audit tripwire fires;
+    a high score on the same evidence → it doesn't."""
+    strong = {"strait_of_hormuz": {"articles": 5, "independent_domains": 4,
+                                   "fresh_72h": 3, "top_trust": 0.9,
+                                   "evidence_weight": 4.0}}
+    news = {**MOCK_NEWS_RESULT,
+            "data": {**MOCK_NEWS_RESULT["data"], "corridor_evidence": strong}}
+    low_llm = {**MOCK_LLM_OUTPUT, "corridor_risk": {
+        "strait_of_hormuz": {"score": 0.2, "confidence": 0.6, "evidence_count": 0,
+                             "key_signals": [], "reasoning": "baseline",
+                             "event_type": "none"}}}
+    fetch_p = patch("agents.gri_agent._fetch_tools",
+                    return_value=(news, MOCK_CORRIDOR_RESULT))
+    with fetch_p, patch("agents.gri_agent._client") as mock_client:
+        mock_client.chat.completions.create.return_value = _make_llm_response(low_llm)
+        result = gri_node(MOCK_STATE)
+    warn = [e for e in result["audit_trail"]
+            if e["action"] == "evidence_ignored_warning"]
+    assert len(warn) == 1
+    assert "strait_of_hormuz" in warn[0]["corridors"]
+
+    with fetch_p, patch("agents.gri_agent._client") as mock_client:
+        mock_client.chat.completions.create.return_value = _make_llm_response(MOCK_LLM_OUTPUT)
+        result2 = gri_node(MOCK_STATE)   # hormuz scored 0.85 → no warning
+    assert not [e for e in result2["audit_trail"]
+                if e["action"] == "evidence_ignored_warning"]
+
+
 # ── #3: Live integration test ─────────────────────────────────────────────────
 
 @pytest.mark.integration
@@ -451,3 +570,86 @@ def test_gri_node_live_llm_real_api():
     for marker in result["stigmergy_markers"]:
         assert marker["deposited_by"] == "gri_agent"
         assert 0.0 <= marker["intensity"] <= 1.0
+
+
+# ── Assessment failure fails LOUD (debugger.md #21) ───────────────────────────
+
+def test_llm_retry_recovers_from_transient_failure():
+    fetch_p, client_p, llm_out = _patch_gri()
+    with fetch_p, client_p as mock_client:
+        mock_client.chat.completions.create.side_effect = [
+            RuntimeError("transient 500"), _make_llm_response(llm_out)]
+        result = gri_node(MOCK_STATE)
+    assert result["assessment_failed"] is False
+    assert result["corridor_risk"]              # scorecard recovered on retry
+    entry = next(e for e in result["audit_trail"] if e["action"] == "llm_assessment")
+    assert entry["attempts"] == 2
+    assert entry["llm_failure"] is None
+
+
+def test_llm_failure_sets_assessment_failed_and_audits_reason():
+    fetch_p, client_p, _ = _patch_gri()
+    with fetch_p, client_p as mock_client:
+        mock_client.chat.completions.create.side_effect = RuntimeError("network down")
+        result = gri_node(MOCK_STATE)
+    assert result["assessment_failed"] is True
+    assert result["corridor_risk"] == {}
+    entry = next(e for e in result["audit_trail"] if e["action"] == "llm_assessment")
+    assert "network down" in entry["llm_failure"]
+    # the empty scorecard is now a block-severity constitution violation, so the
+    # coordinator's integrity aggregator can never miss it
+    assert any(v["rule_id"] == "GRI-09" for v in result["constitution_flags"])
+
+
+def test_unknown_corridor_scorecard_is_a_failure_not_calm():
+    # a scorecard whose keys survive no filter (e.g. display names instead of
+    # ids) must be treated as a failed assessment, not scored-everything-zero
+    bad = {"corridor_risk": {"Strait of Hormuz": {"score": 0.9}},
+           "novel_corridor_alerts": [], "overall_assessment": "",
+           "low_trust_signals_flagged": 0}
+    fetch_p, client_p, _ = _patch_gri()
+    with fetch_p, client_p as mock_client:
+        mock_client.chat.completions.create.return_value = _make_llm_response(bad)
+        result = gri_node(MOCK_STATE)
+    assert result["assessment_failed"] is True
+    entry = next(e for e in result["audit_trail"] if e["action"] == "llm_assessment")
+    assert "no known corridors" in entry["llm_failure"]
+    assert entry["attempts"] == 2               # it retried before giving up
+
+
+# ── Root-cause grouping (validated LLM judgment) ──────────────────────────────
+
+def test_root_cause_groups_validated_and_returned():
+    llm_out = dict(MOCK_LLM_OUTPUT)
+    llm_out["root_cause_groups"] = [
+        # valid — but self-link and unknown corridor must be stripped from driven
+        {"origin": "strait_of_hormuz",
+         "driven": ["bab_el_mandeb", "strait_of_hormuz", "atlantis_channel"],
+         "reasoning": "Attacks declared in support of the Hormuz blockade.",
+         "key_signals": ["Hormuz shipping lanes disrupted"]},
+        # unknown origin → dropped
+        {"origin": "atlantis_channel", "driven": ["suez_canal"]},
+        # origin scored 0.20 (< 0.4) — a calm corridor can't be a root cause
+        {"origin": "suez_canal", "driven": ["malacca_strait"]},
+    ]
+    fetch_p, client_p, _ = _patch_gri()
+    with fetch_p, client_p as mock_client:
+        mock_client.chat.completions.create.return_value = _make_llm_response(llm_out)
+        result = gri_node(MOCK_STATE)
+
+    rc = result["root_causes"]
+    assert len(rc) == 1
+    assert rc[0]["origin"] == "strait_of_hormuz"
+    assert rc[0]["driven"] == ["bab_el_mandeb"]
+    assert any(e.get("action") == "root_cause_grouping"
+               for e in result["audit_trail"])
+
+
+def test_missing_root_cause_groups_is_empty_list():
+    fetch_p, client_p, llm_out = _patch_gri()
+    with fetch_p, client_p as mock_client:
+        mock_client.chat.completions.create.return_value = _make_llm_response(llm_out)
+        result = gri_node(MOCK_STATE)
+    assert result["root_causes"] == []
+    assert not any(e.get("action") == "root_cause_grouping"
+                   for e in result["audit_trail"])
