@@ -153,6 +153,7 @@ def _build_bid(
         "grade_compatible":          grade_compatible,
         "routes_through_disrupted":  corridor in disrupted,
         "scarcity_surcharge_applied": surcharge_applied,
+        "trade_terms":               supplier.get("trade_terms", "FOB"),
     }
 
 

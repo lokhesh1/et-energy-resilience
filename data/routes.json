@@ -1,0 +1,77 @@
+{
+  "_note": "ILLUSTRATIVE VALUES — voyage-level reroute seed. A reroute belongs to a VOYAGE (loading zone -> discharge port), not to a corridor: this file records, per disrupted corridor, what actually happens to cargo that normally transits it — the feasible alternate sea routes (added days / freight multiplier), or the honest 'no maritime alternative' with the physical bypass and its capacity. Days/multipliers are hand-seeded plausible estimates (only Suez->Cape +14d is a real anchor), same status as dsm_params.json. modeled_corridor references one of the 8 known corridor ids when the alternate is itself modeled; null = a real-world route outside the model (informational only). Tracked in CLAUDE.md backlog for calibration.",
+  "corridor_lanes": {
+    "strait_of_hormuz": {
+      "origin_zone": "persian_gulf",
+      "description": "Only maritime exit from the Persian Gulf. A closure strands in-Gulf loadings — there is NO sea detour to India.",
+      "no_maritime_alternative": true,
+      "bypass": {
+        "kind": "pipeline",
+        "description": "Saudi East-West pipeline to Red Sea ports + ADNOC Habshan-Fujairah line (Fujairah loads OUTSIDE the strait)",
+        "capacity_mbd": 6.5,
+        "added_days": 4,
+        "freight_cost_mult": 1.2
+      },
+      "fallback_advice": "re-source from alternate origins (procurement mix) or bridge from SPR",
+      "alternatives": []
+    },
+    "bab_el_mandeb": {
+      "origin_zone": "atlantic_mediterranean",
+      "description": "Red Sea southern gate for Atlantic/Mediterranean-origin cargo bound for India.",
+      "fallback_advice": "divert around Africa; re-source only if the Cape also degrades",
+      "alternatives": [
+        {"alt_route": "cape_of_good_hope", "modeled_corridor": "cape_of_good_hope", "added_days": 14, "freight_cost_mult": 1.35}
+      ]
+    },
+    "suez_canal": {
+      "origin_zone": "atlantic_mediterranean",
+      "description": "Mediterranean/Black-Sea-origin cargo bound for India via the Red Sea.",
+      "fallback_advice": "divert around Africa; SUMED pipeline relieves part of the canal flow",
+      "alternatives": [
+        {"alt_route": "cape_of_good_hope", "modeled_corridor": "cape_of_good_hope", "added_days": 14, "freight_cost_mult": 1.35}
+      ]
+    },
+    "cape_of_good_hope": {
+      "origin_zone": "atlantic",
+      "description": "Atlantic-origin cargo (West Africa, Americas) rounding Africa to India.",
+      "fallback_advice": "route via Suez/Red Sea when open; West African loadings lose little either way",
+      "alternatives": [
+        {"alt_route": "suez_canal + bab_el_mandeb", "modeled_corridor": "suez_canal", "added_days": 6, "freight_cost_mult": 1.15}
+      ]
+    },
+    "malacca_strait": {
+      "origin_zone": "far_east",
+      "description": "East-bound lane; for India-bound crude mostly relevant to Far-East loadings.",
+      "fallback_advice": "short archipelago detours exist — minor delay, no re-sourcing needed",
+      "alternatives": [
+        {"alt_route": "sunda_strait", "modeled_corridor": null, "added_days": 2, "freight_cost_mult": 1.08},
+        {"alt_route": "lombok_strait", "modeled_corridor": null, "added_days": 3, "freight_cost_mult": 1.1}
+      ]
+    },
+    "turkish_straits": {
+      "origin_zone": "black_sea",
+      "description": "Black-Sea export outlet (CPC blend, Urals loadings).",
+      "fallback_advice": "no sea detour from inside the Black Sea — substitute Baltic loadings of the same grades",
+      "alternatives": [
+        {"alt_route": "baltic loading via danish_straits (substitute export outlet)", "modeled_corridor": "danish_straits", "added_days": 9, "freight_cost_mult": 1.25}
+      ]
+    },
+    "danish_straits": {
+      "origin_zone": "baltic",
+      "description": "Baltic export outlet for Russian/North-European grades.",
+      "fallback_advice": "substitute Black-Sea loadings of comparable grades",
+      "alternatives": [
+        {"alt_route": "black sea loading via turkish_straits (substitute export outlet)", "modeled_corridor": "turkish_straits", "added_days": 9, "freight_cost_mult": 1.25}
+      ]
+    },
+    "panama_canal": {
+      "origin_zone": "americas_pacific",
+      "description": "Minor for India-bound crude; matters for US Gulf cargo taking the Pacific routing.",
+      "fallback_advice": "round South America or take the Atlantic routing via the Cape",
+      "alternatives": [
+        {"alt_route": "cape_horn", "modeled_corridor": null, "added_days": 12, "freight_cost_mult": 1.3},
+        {"alt_route": "atlantic routing via cape_of_good_hope", "modeled_corridor": "cape_of_good_hope", "added_days": 10, "freight_cost_mult": 1.25}
+      ]
+    }
+  }
+}

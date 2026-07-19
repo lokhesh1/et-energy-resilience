@@ -385,7 +385,7 @@ def test_shared_checkpointer_and_thread_ids(client, monkeypatch):
         return _FINAL
     monkeypatch.setattr(chat, "run_board_with_learning", fake)
 
-    r1 = client.post("/chat", json={"message": "turn 1"})
+    r1 = client.post("/chat", json={"message": "oil supply disruption"})
     sid = r1.json()["session_id"]
     _mock_route(monkeypatch, intent="run_board", query="standalone turn 2")
     r2 = client.post("/chat", json={"session_id": sid, "message": "turn 2"})
@@ -420,7 +420,7 @@ def test_learn_flag_passthrough(client, monkeypatch):
         seen.update(kw)
         return _FINAL
     monkeypatch.setattr(chat, "run_board_with_learning", fake)
-    client.post("/chat", json={"message": "test", "learn": False})
+    client.post("/chat", json={"message": "oil supply status", "learn": False})
     assert seen["learn"] is False
 
 
@@ -663,3 +663,82 @@ def test_follow_up_duration_chip_uses_top_impact_corridor():
     ups = suggest_follow_ups(summary)
     assert any("strait_of_hormuz disruption lasts twice as long" in u for u in ups)
     assert not any("bab_el_mandeb disruption lasts twice" in u for u in ups)
+
+
+# ── Off-topic query rejection ──────────────────────────────────────────────────
+
+def test_off_topic_first_turn_rejected(client, monkeypatch):
+    """A first-turn query naming no corridor and no energy keyword is rejected
+    without burning a full board run."""
+    calls = _mock_board(monkeypatch)
+    r = client.post("/chat", json={"message": "what is the weather in paris"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["mode"] == "rejected_off_topic"
+    assert "8 corridors" in body["reply"]
+    assert len(calls) == 0  # board never ran
+
+
+def test_energy_keyword_passes_validation(client, monkeypatch):
+    """Queries with energy keywords but no specific corridor pass validation."""
+    calls = _mock_board(monkeypatch)
+    r = client.post("/chat", json={"message": "current oil supply status"})
+    assert r.status_code == 200
+    assert r.json()["mode"] == "run_board"
+    assert len(calls) == 1
+
+
+# ── Enriched digest ────────────────────────────────────────────────────────────
+
+def test_digest_carries_disruption_drivers_and_root_causes():
+    from agents.distiller.experience_distiller import build_trajectory
+    state = {
+        **_FINAL,
+        "response_plan": {
+            **_FINAL["response_plan"],
+            "situation": {
+                **_FINAL["response_plan"]["situation"],
+                "disruption_drivers": [
+                    {"corridor": "strait_of_hormuz", "gap_contribution_mbd": 1.77,
+                     "risk_score": 0.9, "event_type": "war_conflict"},
+                    {"corridor": "bab_el_mandeb", "gap_contribution_mbd": 0.55,
+                     "risk_score": 0.85, "event_type": "war_conflict"},
+                ],
+                "root_causes": [
+                    {"origin": "strait_of_hormuz",
+                     "driven": [{"corridor": "bab_el_mandeb", "via": ["evidence"]}],
+                     "reasoning": "Iran conflict drives Red Sea attacks"},
+                ],
+            },
+            "procurement": {
+                **_FINAL["response_plan"]["procurement"],
+                "est_daily_cost_usd": 116_833_150,
+            },
+        },
+        "retrieved_memories": [{"text": "2019 tanker attacks", "score": 0.81}],
+        "risk_signals": [
+            {"title": "Iran threatens Hormuz", "source": "reuters.com",
+             "trust_score": 0.9, "corridors": ["strait_of_hormuz"]},
+        ],
+        "audit_trail": [
+            {"agent": "gri_agent", "action": "tool_fetch",
+             "evidence_by_corridor": {"strait_of_hormuz": 15, "suez_canal": 3,
+                                      "danish_straits": 0}},
+        ],
+    }
+    digest = build_trajectory(state)
+    # disruption_drivers present and impact-ordered
+    assert digest["disruption_drivers"][0]["corridor"] == "strait_of_hormuz"
+    assert digest["disruption_drivers"][0]["gap_contribution_mbd"] == 1.77
+    # root_causes present
+    assert digest["root_causes"][0]["origin"] == "strait_of_hormuz"
+    # est_daily_cost_usd present
+    assert digest["procurement"]["est_daily_cost_usd"] == 116_833_150
+    # news_evidence with by_corridor counts
+    assert digest["news_evidence"]["by_corridor"]["strait_of_hormuz"] == 15
+    assert digest["news_evidence"]["by_corridor"]["danish_straits"] == 0
+    assert digest["news_evidence"]["article_count"] == 1
+    # top_articles sample
+    assert digest["news_evidence"]["top_articles"][0]["title"] == "Iran threatens Hormuz"
+    # precedents
+    assert digest["precedents"][0]["text"] == "2019 tanker attacks"

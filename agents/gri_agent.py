@@ -1,4 +1,5 @@
 import json
+import pathlib
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
@@ -15,6 +16,18 @@ KNOWN_CORRIDORS = {
     "strait_of_hormuz", "suez_canal", "malacca_strait", "bab_el_mandeb",
     "turkish_straits", "danish_straits", "cape_of_good_hope", "panama_canal",
 }
+
+# Structural geopolitical relationships — always-true causal links between
+# corridors (e.g., Iran → Houthis → Bab el-Mandeb). Loaded once at import;
+# injected into the GRI prompt so the LLM groups events correctly even when
+# today's articles don't explicitly link them.
+_RELATIONSHIPS_PATH = pathlib.Path(__file__).resolve().parent.parent / "data" / "corridor_relationships.json"
+_CORRIDOR_RELATIONSHIPS: list[dict] = []
+try:
+    _raw = json.loads(_RELATIONSHIPS_PATH.read_text(encoding="utf-8"))
+    _CORRIDOR_RELATIONSHIPS = _raw.get("relationships", [])
+except Exception:
+    pass
 
 _client = OpenAI(api_key=OPENROUTER_API_KEY, base_url=OPENROUTER_BASE_URL)
 
@@ -152,6 +165,24 @@ def _build_user_prompt(query: str, articles: list[dict], corridors: list[dict],
         f"{c['id']}: {c['baseline_flow_mbd']} mbd | chokepoint={c['chokepoint']} | factors={c['risk_factors']}"
         for c in corridors
     )
+
+    # Inject structural geopolitical relationships so root-cause grouping works
+    # even when today's articles don't explicitly link events.
+    relationships_block = ""
+    if _CORRIDOR_RELATIONSHIPS:
+        rel_lines = []
+        for r in _CORRIDOR_RELATIONSHIPS:
+            rel_lines.append(
+                f"  {r['origin']} → {', '.join(r['driven'])} "
+                f"(actor: {r['actor']}; {r['mechanism'][:120]})"
+            )
+        relationships_block = (
+            "\nKNOWN GEOPOLITICAL RELATIONSHIPS (structural, always-true priors — "
+            "use these for root_cause_groups even if today's articles don't "
+            "explicitly state the link; override ONLY if evidence contradicts):\n"
+            + "\n".join(rel_lines) + "\n"
+        )
+
     return f"""QUERY: {query}
 
 The 8 known corridor IDs are: strait_of_hormuz, suez_canal, malacca_strait, bab_el_mandeb, turkish_straits, danish_straits, cape_of_good_hope, panama_canal.
@@ -159,10 +190,9 @@ The 8 known corridor IDs are: strait_of_hormuz, suez_canal, malacca_strait, bab_
 NEWS SIGNALS (trust_score | title | source):
 {signals or "(no articles found)"}
 {coverage}
-
 CORRIDOR BASELINES:
 {baselines}
-
+{relationships_block}
 INSTRUCTIONS:
 1. PHASE 1: Read the QUERY. Identify which of the 8 corridors it explicitly describes as disrupted. Score each one by the described severity (see system prompt). If MULTIPLE corridors are named, score ALL of them.
 2. PHASE 2: Score EVERY corridor from the news evidence using the weighting rules (trust, recency, attribution, independent domains). Evidence alone MUST raise a corridor's score when trusted recent reporting describes disruption — even if the QUERY asserts nothing. Cite the articles in key_signals.
@@ -170,7 +200,7 @@ INSTRUCTIONS:
 4. Any corridor name NOT in the 8 known ones → novel_corridor_alerts only.
 5. Classify each corridor's dominant risk driver as one of: war_conflict | sanctions | political_tension | weather_disruption | market_spike | piracy | infrastructure_failure | none
 6. You MUST include ALL 8 corridors in corridor_risk — not just the disrupted ones.
-7. If the cited evidence links several corridors' risks to one underlying event, fill root_cause_groups (origin + driven corridors, cite the linking titles); otherwise use an empty list.
+7. If the cited evidence OR the known geopolitical relationships link several corridors' risks to one underlying event, fill root_cause_groups (origin + driven corridors, cite the linking evidence or name the structural relationship); otherwise use an empty list.
 
 Return this exact JSON schema:
 {{

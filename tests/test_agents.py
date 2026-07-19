@@ -559,7 +559,8 @@ def test_gri_node_live_llm_real_api():
     assert result["current_agent"] == "gri_agent"
     assert isinstance(result["corridor_risk"], dict)
     assert isinstance(result["risk_signals"], list)
-    assert len(result["audit_trail"]) == 2
+    # 2 = tool_fetch + llm_assessment; 3+ if root_cause_grouping or evidence_ignored
+    assert len(result["audit_trail"]) >= 2
 
     # Score validity — whatever the LLM returned must be in range
     for cid, score in result["corridor_risk"].items():

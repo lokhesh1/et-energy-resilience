@@ -128,6 +128,7 @@ def _committed_actions(mix: dict) -> list[dict]:
             "delivery_corridor": c.get("delivery_corridor"),
             "transit_days":     c.get("transit_days_to_india"),
             "sanctions_status": c.get("sanctions_status", "clear"),
+            "trade_terms":      c.get("trade_terms", "FOB"),
             # Disclose transit risk: without these the narrative says "secure via
             # strait_of_hormuz" and "monitor disruption on strait_of_hormuz" in the
             # same plan with no acknowledgment they are the same corridor.

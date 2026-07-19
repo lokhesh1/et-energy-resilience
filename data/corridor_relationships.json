@@ -1,0 +1,32 @@
+{
+  "_note": "COLD-START BOOTSTRAP SEED — NOT the final design. Geopolitical relationships are dynamic (alliances shift, proxy control weakens, new conflicts emerge); this file exists only because the memory system starts empty and GRI needs SOME relationship knowledge to produce root_cause_groups on day one. 2 of 3 relationships are physical geography (chokepoint chains — genuinely static); the Iran-proxy link is a current-era geopolitical prior that WILL become stale if the political landscape changes. The GRI prompt instructs 'override if evidence contradicts' so this seed cannot force incorrect groupings. Target: replace with memory-driven dynamic relationships (Phase 1) + knowledge graph (Phase 2) — design doc: docs/dynamic_corridor_relationships.md. Until then this file is the scaffold, not the building.",
+  "relationships": [
+    {
+      "origin": "strait_of_hormuz",
+      "driven": ["bab_el_mandeb", "suez_canal"],
+      "actor": "Iran",
+      "mechanism": "Iran-backed Houthi militia controls Bab el-Mandeb access; Suez Canal traffic disrupted when Red Sea is unsafe. Hormuz escalation by Iran frequently co-occurs with Houthi Red Sea attacks as coordinated pressure.",
+      "direction": "origin_escalation_drives_proxy",
+      "confidence": "high",
+      "sources": ["IISS Strategic Dossier", "CSIS analysis", "UN Panel of Experts on Yemen"]
+    },
+    {
+      "origin": "bab_el_mandeb",
+      "driven": ["suez_canal", "cape_of_good_hope"],
+      "actor": "Houthi forces / Yemen conflict",
+      "mechanism": "Bab el-Mandeb closure blocks the southern Suez approach; traffic reroutes around Africa via Cape of Good Hope, overloading that route.",
+      "direction": "physical_chokepoint_chain",
+      "confidence": "high",
+      "sources": ["EIA World Oil Transit Chokepoints", "IMO shipping advisories"]
+    },
+    {
+      "origin": "suez_canal",
+      "driven": ["cape_of_good_hope"],
+      "actor": "Egypt / canal authority",
+      "mechanism": "Suez closure forces Europe-Asia traffic around the Cape of Good Hope (+14 days, freight multiplier ~1.35x).",
+      "direction": "physical_chokepoint_chain",
+      "confidence": "high",
+      "sources": ["EIA World Oil Transit Chokepoints"]
+    }
+  ]
+}

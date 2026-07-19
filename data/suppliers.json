@@ -1,5 +1,6 @@
 {
-  "_note": "ILLUSTRATIVE — supplier list, indicative price premiums (USD/bbl vs Brent), realistic max volumes, transit days and delivery corridors are hand-seeded plausible estimates, NOT sourced from Kpler/Vortexa/Platts. price_premium_usd is ADDED to the live Brent price (price_feed) at bid time; negative = discount (sanctioned/heavy grades trade at a discount). 'grade' MUST exist in grade_matrix.grades; 'delivery_corridor' MUST be one of the 8 known corridors (it is the route the cargo uses to reach India, so a bid can be flagged if it routes through the disrupted corridor). The sanctioned entries (Iran/Russia/Venezuela) are DELIBERATELY attractive on price and are caught by tools/sanctions_check.py against data/sdn_seed.json. Calibrate before treating as real. Tracked in CLAUDE.md backlog.",
+  "_note": "ILLUSTRATIVE — supplier list, indicative price premiums (USD/bbl vs Brent), realistic max volumes, transit days and delivery corridors are hand-seeded plausible estimates, NOT sourced from Kpler/Vortexa/Platts. price_premium_usd is ADDED to the live Brent price (price_feed) at bid time; negative = discount (sanctioned/heavy grades trade at a discount). 'grade' MUST exist in grade_matrix.grades; 'delivery_corridor' MUST be one of the 8 known corridors (it is the route the cargo uses to reach India, so a bid can be flagged if it routes through the disrupted corridor). The sanctioned entries (Iran/Russia/Venezuela) are DELIBERATELY attractive on price and are caught by tools/sanctions_check.py against data/sdn_seed.json. 'trade_terms' is FOB (buyer bears transit risk from load_port) for all Indian crude imports — this is a market reality, not a guess (PPAC import data confirms FOB pricing). Calibrate before treating as real. Tracked in CLAUDE.md backlog.",
+  "trade_terms_note": "India's crude oil imports are overwhelmingly FOB (Free on Board): the Indian buyer (refinery/OMC) takes title and transit risk at the loading port. The seller delivers to the vessel; everything after (freight, insurance, piracy risk, reroute cost) is the buyer's problem. This means transit risk for ALL these suppliers is borne by the Indian importing company (IOC, BPCL, HPCL, RIL, Nayara, MRPL etc.).",
   "suppliers": [
     {
       "id": "nnpc_bonny_light",
@@ -10,7 +11,8 @@
       "max_volume_mbd": 0.5,
       "transit_days_to_india": 20,
       "load_port": "Bonny",
-      "delivery_corridor": "cape_of_good_hope"
+      "delivery_corridor": "cape_of_good_hope",
+      "trade_terms": "FOB"
     },
     {
       "id": "nnpc_qua_iboe",
@@ -21,7 +23,8 @@
       "max_volume_mbd": 0.3,
       "transit_days_to_india": 21,
       "load_port": "Qua Iboe Terminal",
-      "delivery_corridor": "cape_of_good_hope"
+      "delivery_corridor": "cape_of_good_hope",
+      "trade_terms": "FOB"
     },
     {
       "id": "sonangol_girassol",
@@ -32,7 +35,8 @@
       "max_volume_mbd": 0.25,
       "transit_days_to_india": 22,
       "load_port": "Girassol FPSO",
-      "delivery_corridor": "cape_of_good_hope"
+      "delivery_corridor": "cape_of_good_hope",
+      "trade_terms": "FOB"
     },
     {
       "id": "sonangol_dalia",
@@ -43,7 +47,8 @@
       "max_volume_mbd": 0.2,
       "transit_days_to_india": 23,
       "load_port": "Dalia FPSO",
-      "delivery_corridor": "cape_of_good_hope"
+      "delivery_corridor": "cape_of_good_hope",
+      "trade_terms": "FOB"
     },
     {
       "id": "usgc_wti",
@@ -54,7 +59,8 @@
       "max_volume_mbd": 0.5,
       "transit_days_to_india": 35,
       "load_port": "Houston",
-      "delivery_corridor": "cape_of_good_hope"
+      "delivery_corridor": "cape_of_good_hope",
+      "trade_terms": "FOB"
     },
     {
       "id": "canada_wcs",
@@ -65,7 +71,8 @@
       "max_volume_mbd": 0.4,
       "transit_days_to_india": 32,
       "load_port": "Vancouver",
-      "delivery_corridor": "panama_canal"
+      "delivery_corridor": "panama_canal",
+      "trade_terms": "FOB"
     },
     {
       "id": "brazil_lula",
@@ -76,7 +83,8 @@
       "max_volume_mbd": 0.3,
       "transit_days_to_india": 30,
       "load_port": "Santos",
-      "delivery_corridor": "cape_of_good_hope"
+      "delivery_corridor": "cape_of_good_hope",
+      "trade_terms": "FOB"
     },
     {
       "id": "spot_arab_light",
@@ -87,7 +95,8 @@
       "max_volume_mbd": 0.3,
       "transit_days_to_india": 6,
       "load_port": "Fujairah",
-      "delivery_corridor": "strait_of_hormuz"
+      "delivery_corridor": "strait_of_hormuz",
+      "trade_terms": "FOB"
     },
     {
       "id": "spot_arab_heavy",
@@ -98,7 +107,8 @@
       "max_volume_mbd": 0.3,
       "transit_days_to_india": 7,
       "load_port": "Ras Tanura",
-      "delivery_corridor": "strait_of_hormuz"
+      "delivery_corridor": "strait_of_hormuz",
+      "trade_terms": "FOB"
     },
     {
       "id": "spot_lula_atlantic",
@@ -109,7 +119,8 @@
       "max_volume_mbd": 0.2,
       "transit_days_to_india": 28,
       "load_port": "Rotterdam storage",
-      "delivery_corridor": "cape_of_good_hope"
+      "delivery_corridor": "cape_of_good_hope",
+      "trade_terms": "FOB"
     },
     {
       "id": "spot_bonny_light",
@@ -120,7 +131,8 @@
       "max_volume_mbd": 0.2,
       "transit_days_to_india": 19,
       "load_port": "Lome storage",
-      "delivery_corridor": "cape_of_good_hope"
+      "delivery_corridor": "cape_of_good_hope",
+      "trade_terms": "FOB"
     },
     {
       "id": "nioc_iranian_heavy",
@@ -131,7 +143,8 @@
       "max_volume_mbd": 0.6,
       "transit_days_to_india": 6,
       "load_port": "Kharg Island",
-      "delivery_corridor": "strait_of_hormuz"
+      "delivery_corridor": "strait_of_hormuz",
+      "trade_terms": "FOB"
     },
     {
       "id": "rosneft_urals",
@@ -142,7 +155,8 @@
       "max_volume_mbd": 0.8,
       "transit_days_to_india": 25,
       "load_port": "Novorossiysk",
-      "delivery_corridor": "suez_canal"
+      "delivery_corridor": "suez_canal",
+      "trade_terms": "FOB"
     },
     {
       "id": "pdvsa_merey",
@@ -153,7 +167,8 @@
       "max_volume_mbd": 0.5,
       "transit_days_to_india": 35,
       "load_port": "Jose Terminal",
-      "delivery_corridor": "cape_of_good_hope"
+      "delivery_corridor": "cape_of_good_hope",
+      "trade_terms": "FOB"
     }
   ]
 }

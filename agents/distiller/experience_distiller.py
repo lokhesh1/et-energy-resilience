@@ -84,6 +84,13 @@ def build_trajectory(state: EnergyIntelligenceBoard) -> dict:
     mix = state.get("recommended_mix", {}) or {}
     plan = state.get("response_plan", {}) or {}
 
+    # Impact-ordered disruption drivers from the coordinator (debugger.md #20).
+    # The chat MUST use this ordering (contribution to gap), not the score-sorted
+    # corridor_risks below, when answering "which corridor causes the most shortfall."
+    sit = plan.get("situation", {}) or {}
+    disruption_drivers = sit.get("disruption_drivers") or []
+    root_causes = sit.get("root_causes") or []
+
     risks = sorted(
         ({"corridor": cid, "score": _score_of(v),
           "event_type": corridor_events.get(cid, "none")}
@@ -137,22 +144,60 @@ def build_trajectory(state: EnergyIntelligenceBoard) -> dict:
         "volume_mbd":        c.get("volume_mbd"),
         "delivery_corridor": c.get("delivery_corridor"),
         "transit_days":      c.get("transit_days_to_india"),
+        "trade_terms":       c.get("trade_terms", "FOB"),
     } for c in (mix.get("components", []) or [])[:_MAX_ITEMS]]
+
+    # News evidence: per-corridor article counts so the chat can answer
+    # "which corridors have zero coverage?" without fabricating (Finding #1).
+    # Also carries a small sample of article titles/sources for citation.
+    news_evidence_by_corridor: dict = {}
+    news_articles_sample: list[dict] = []
+    for entry in state.get("audit_trail", []) or []:
+        if (entry.get("agent") == "gri_agent"
+                and entry.get("action") == "tool_fetch"):
+            news_evidence_by_corridor = entry.get("evidence_by_corridor", {}) or {}
+            break
+    raw_signals = state.get("risk_signals", []) or []
+    # Compact article sample: title + source + corridors, highest-trust first.
+    for a in sorted(raw_signals, key=lambda x: float(x.get("trust_score") or 0),
+                    reverse=True)[:_MAX_ITEMS]:
+        news_articles_sample.append({
+            "title":    a.get("title", ""),
+            "source":   a.get("source", "unknown"),
+            "corridors": a.get("corridors", []),
+        })
+
+    # Retrieved memories / precedents — so "have we seen this before?" is answerable.
+    precedents = []
+    for p in (state.get("retrieved_memories", []) or [])[:4]:
+        precedents.append({
+            "text":  p.get("text", ""),
+            "score": p.get("score"),
+        })
+
+    proc_plan = plan.get("procurement", {}) or {}
 
     return {
         "query":            state.get("query", ""),
         "outcome":          _run_outcome(state),
         "escalation_level": plan.get("escalation_level"),
         "corridor_risks":   risks,
+        "disruption_drivers": [{
+            "corridor":             d.get("corridor"),
+            "gap_contribution_mbd": d.get("gap_contribution_mbd"),
+            "risk_score":           d.get("risk_score"),
+            "event_type":           d.get("event_type"),
+        } for d in disruption_drivers[:_MAX_ITEMS]],
+        "root_causes": [{
+            "origin":     rc.get("origin"),
+            "driven":     rc.get("driven"),
+            "reasoning":  rc.get("reasoning", ""),
+        } for rc in root_causes[:4]],
         "scenarios":        scenario_digest,
         "twin": {
             "gap_mbd":             round(float(twin.get("total_india_shortfall_mbd", 0.0) or 0.0), 4),
             "critical_count":      twin.get("critical_count", 0),
             "stressed_count":      twin.get("stressed_count", 0),
-            # NOT capped: bounded by the physical refineries file (12), and a
-            # truncated list makes follow-up answers contradict the board's count.
-            # Stressed names carried too — a tension run can have 12 stressed and
-            # 0 critical, and "which refineries?" must still be answerable.
             "critical_refineries": [r.get("name") for r in refineries
                                     if r.get("status") == "critical"],
             "stressed_refineries": [r.get("name") for r in refineries
@@ -163,15 +208,20 @@ def build_trajectory(state: EnergyIntelligenceBoard) -> dict:
             "refinery_reroutes":   refinery_reroutes,
         },
         "procurement": {
-            "covered_mbd":      mix.get("total_volume_mbd"),
-            "coverage_ratio":   mix.get("coverage_ratio"),
-            "covers_gap":       mix.get("covers_gap"),
-            "residual_gap_mbd": (plan.get("procurement", {}) or {}).get("residual_gap_mbd"),
-            # A covered gap with cargoes still at sea is NOT normal supply today —
-            # the follow-up "but supplies are normal how?" must be answerable.
-            "delivery_lag":     (plan.get("procurement", {}) or {}).get("delivery_lag"),
-            "cargoes":          cargoes,
+            "covered_mbd":        mix.get("total_volume_mbd"),
+            "coverage_ratio":     mix.get("coverage_ratio"),
+            "covers_gap":         mix.get("covers_gap"),
+            "residual_gap_mbd":   proc_plan.get("residual_gap_mbd"),
+            "est_daily_cost_usd": proc_plan.get("est_daily_cost_usd"),
+            "delivery_lag":       proc_plan.get("delivery_lag"),
+            "cargoes":            cargoes,
         },
+        "news_evidence": {
+            "article_count":  len(raw_signals),
+            "by_corridor":    news_evidence_by_corridor,
+            "top_articles":   news_articles_sample,
+        },
+        "precedents":        precedents,
         "unresolved_issues": (plan.get("unresolved_issues", []) or [])[:_MAX_ITEMS],
         "recommendation":    state.get("final_recommendation", ""),
     }

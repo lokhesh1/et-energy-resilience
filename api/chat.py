@@ -34,6 +34,7 @@ from config.settings import (
 from graph.workflow import run_board_with_learning
 from agents.distiller.experience_distiller import build_trajectory
 from api.summary import summarize_final, build_components, suggest_follow_ups
+from tools.news_fetcher import route_corridors
 
 router = APIRouter(tags=["chat"])
 
@@ -47,6 +48,27 @@ _client = OpenAI(api_key=OPENROUTER_API_KEY, base_url=OPENROUTER_BASE_URL)
 _CHECKPOINTER = MemorySaver()
 
 _MAX_STORED_TURNS = 24
+
+# Energy-domain keywords: if a first-turn query names no known corridor AND
+# contains none of these, it's almost certainly off-topic or nonsense — running
+# the full board (40+s, real LLM + news) is pure waste. Return an honest
+# "I don't recognise a real corridor in your query" instead.
+_ENERGY_KEYWORDS = frozenset({
+    "oil", "crude", "supply", "disruption", "blockade", "corridor", "refinery",
+    "pipeline", "tanker", "shipping", "sanctions", "embargo", "attack", "war",
+    "conflict", "tension", "closure", "shut", "risk", "shortage", "shortfall",
+    "energy", "petroleum", "opec", "india", "import", "export", "lng", "gas",
+    "fuel", "diesel", "brent", "status", "current", "recommend", "what if",
+})
+
+
+def _is_energy_query(query: str) -> bool:
+    """Does this query name a known corridor or contain an energy-domain keyword?
+    If neither, it's off-topic and should not trigger a full board run."""
+    if route_corridors(query):
+        return True
+    q_lower = query.lower()
+    return any(kw in q_lower for kw in _ENERGY_KEYWORDS)
 
 
 # ── Request model ───────────────────────────────────────────────────────────────
@@ -168,7 +190,8 @@ _ANSWER_SYSTEM = """\
 You are the Energy Intelligence Board's briefing voice, answering a follow-up
 question about the board's most recent run.  The JSON below is the board's
 internal record of that run.  Answer using ONLY this data — cite specific
-numbers.  Do NOT invent data not present in it.  Be concise (2-4 sentences).
+numbers.  Do NOT invent data not present in it.  Be concise but complete
+(2-5 sentences; use more when citing sources or explaining causality).
 
 Style rules:
 - Speak as the board ("The last board run found ...").  NEVER use internal
@@ -177,6 +200,47 @@ Style rules:
   transit: never describe supply as "normal", "closed", or "mitigated" today.
   Use the delivery_lag / transit_days figures when present ("covered once
   deliveries land in ~N days; SPR bridges the interim").
+
+Answer-shaping rules:
+- YES/NO FIRST: if the user asks a yes/no question ("is X happening?", "can Y
+  cover Z?", "is it separate?"), START your answer with "Yes" or "No" (or
+  "Partially"), THEN give the supporting evidence/numbers.
+- WHAT BRIDGES THE GAP TODAY: when delivery_lag exists, explicitly name what
+  keeps refineries running RIGHT NOW: "the SPR drawdown of X mbd is bridging
+  the physical gap until the first cargo arrives in ~N days." Do not just say
+  cargoes are "in transit" without naming the interim bridge.
+- CITE SOURCES: when the user asks about evidence, cite from news_evidence.
+  top_articles (article title, source name) — e.g., "based on reporting by
+  Reuters ('Iran threatens...'), Business Standard ('Red Sea attacks...'), ..."
+  If news_evidence.by_corridor shows 0 for a corridor, say "no articles
+  retrieved for [corridor] — unverified, not confirmed calm."
+- IMPACT vs SCORE: when answering "which corridor causes the most shortfall",
+  use disruption_drivers (ordered by gap_contribution_mbd), NOT corridor_risks
+  (ordered by score). The corridor CONTRIBUTING the most mbd to the gap is the
+  answer — not the one with the highest risk number.
+- ROOT CAUSES: when answering whether events are linked/separate/knock-on,
+  check root_causes — if an origin drives other corridors, name the link.
+  If root_causes is empty, the events are independent per the evidence.
+- PRECEDENTS: when the user asks "have we seen this before?" or about history,
+  check the precedents list. If non-empty, cite them. If empty, say "no
+  comparable precedent was found in the board's memory."
+- COSTS: use procurement.est_daily_cost_usd when the user asks about costs.
+- TRANSIT RISK: India's crude imports are predominantly FOB (Free on Board) —
+  the buying refinery/oil marketing company bears transit risk from the loading
+  port. If the user asks "who bears transit risk", answer with this fact and
+  name the corridor(s) the cargo transits (from cargoes[].delivery_corridor).
+- DECLINE GRACEFULLY: if the data doesn't contain what the user asks for, say
+  "that information is not available in this run's data" — NEVER fabricate a
+  specific number or corridor name to fill the gap.
+- UNRECOGNIZED ENTITIES: if the query mentions a corridor/location that does
+  NOT appear anywhere in the run data (corridor_risks, disruption_drivers,
+  twin), say "I don't recognise '[name]' as one of the 8 monitored corridors"
+  and then briefly state what was ACTUALLY found from real-world evidence.
+- SUGGEST NEXT STEPS: if the question is about timelines or recovery ("when
+  does supply return to normal?"), after giving the delivery timeline, note
+  that resolution also depends on the geopolitical situation (cite the
+  event_type) and suggest the user ask about alternatives or re-run with
+  different assumptions.
 
 Run data:
 {digest_json}
@@ -342,6 +406,29 @@ def chat(req: ChatRequest) -> dict:
         route = _route(req.message, ctx["turns"], ctx["summary"])
         intent, query = route["intent"], route["standalone_query"]
         scenario_params = route.get("scenario_params")
+
+    # Guard: reject obviously off-topic queries BEFORE burning a full board run.
+    # Only applies to the FIRST turn (run_count==0) where there's no prior context
+    # to fall back on. On subsequent turns the router's rewritten standalone_query
+    # incorporates scenario context, so "new crisis" after a Hormuz run is fine.
+    if intent == "run_board" and ctx["run_count"] == 0 and not _is_energy_query(query):
+        reply = (
+            "I don't recognise a real energy corridor or supply-chain topic in "
+            "your query. The 8 corridors I monitor are: Strait of Hormuz, Suez "
+            "Canal, Bab el-Mandeb, Malacca Strait, Turkish Straits, Danish "
+            "Straits, Cape of Good Hope, and Panama Canal. Please rephrase with "
+            "a specific corridor or energy scenario, or ask about the current "
+            "status of India's oil supply."
+        )
+        store.append_turn(sid, "assistant", reply)
+        return {
+            "session_id": sid,
+            "mode": "rejected_off_topic",
+            "reply": reply,
+            "run_summary": None,
+            "components": ctx["components"],
+            "follow_ups": ctx["follow_ups"],
+        }
 
     if intent == "run_board":
         run_n = ctx["run_count"] + 1
