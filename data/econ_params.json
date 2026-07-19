@@ -1,0 +1,20 @@
+{
+  "_note": "ILLUSTRATIVE economic-impact parameters — hand-seeded, NOT calibrated. Same status as dsm_params.json / refineries.json (see CLAUDE.md). india_crude_imports_mbd is a conservative ~PPAC 2024-25 figure; cpi/cad coefficients are mid-range from RBI analyses; elasticity is standard short-run energy economics (Kilian & Murphy 2014 ballpark). Calibrate from RBI, PPAC, IEA before treating as real.",
+  "india_crude_imports_mbd": 4.8,
+  "avg_refinery_grm_usd_per_bbl": 8.0,
+  "opportunity_cost_usd_per_bbl": 4.0,
+  "short_run_demand_elasticity": 0.05,
+  "brent_spike_cap_usd": 40.0,
+  "global_crude_demand_mbd": 102.0,
+  "cpi_bps_per_10usd_brent": 30,
+  "cad_pct_gdp_per_10usd_brent": 0.4,
+  "india_product_export_mbd": 1.2,
+  "avg_product_margin_usd_per_bbl": 12.0,
+  "india_domestic_consumption_mbd": 5.5,
+  "carry_cost_usd_per_bbl_per_day": 0.05,
+  "price_escalation_rate_per_day": 0.002,
+  "max_feasible_restraint_pct": 0.05,
+  "gdp_oil_intensity_usd_per_bbl": 3.5,
+  "freight_rate_usd_per_bbl_per_day": 0.12,
+  "spr_refill_premium_usd_per_bbl": 5.0
+}

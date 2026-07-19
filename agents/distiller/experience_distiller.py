@@ -177,6 +177,39 @@ def build_trajectory(state: EnergyIntelligenceBoard) -> dict:
 
     proc_plan = plan.get("procurement", {}) or {}
 
+    # Economic impact: compact block so cost/recovery questions are answerable.
+    econ_raw = state.get("economic_impact", {}) or {}
+    econ_digest: dict | None = None
+    if econ_raw.get("total_exposure_usd") or econ_raw.get("do_nothing_cost_usd"):
+        micro = econ_raw.get("micro", {}) or {}
+        macro = econ_raw.get("macro", {}) or {}
+        spike = econ_raw.get("brent_spike_estimate", {}) or {}
+        timeline = econ_raw.get("recovery_timeline", {}) or {}
+        econ_digest = {
+            "total_exposure_usd":     econ_raw.get("total_exposure_usd"),
+            "do_nothing_cost_usd":    econ_raw.get("do_nothing_cost_usd"),
+            "plan_net_benefit_usd":   econ_raw.get("plan_net_benefit_usd"),
+            "brent_spike_delta_usd":  spike.get("delta_usd"),
+            "import_bill_delta_usd":  macro.get("import_bill_delta_usd"),
+            "cpi_impact_bps":         macro.get("cpi_impact_bps"),
+            "cad_gdp_impact_pct":     macro.get("cad_gdp_impact_pct"),
+            "premium_spend_usd":      micro.get("premium_spend_usd"),
+            "residual_loss_usd":      micro.get("residual_loss_usd"),
+            "spr_refill_exposure_usd": micro.get("spr_refill_exposure_usd"),
+            "days_to_normal":         timeline.get("days_to_normal"),
+            "daily_loss_do_nothing_usd": (timeline.get("daily_loss_curve", [{}])[0]
+                                          .get("daily_loss_do_nothing_usd")
+                                          if timeline.get("daily_loss_curve") else None),
+            "recovery_actions": [{
+                "lever":           a.get("lever"),
+                "net_benefit_usd": a.get("net_benefit_usd"),
+                "description":     a.get("description"),
+            } for a in (econ_raw.get("recovery_actions") or [])[:6]],
+            "subsidy_vs_passthrough": econ_raw.get("subsidy_vs_passthrough"),
+            "top_refinery_loss": (micro.get("refinery_losses", [{}])[0]
+                                  if micro.get("refinery_losses") else None),
+        }
+
     return {
         "query":            state.get("query", ""),
         "outcome":          _run_outcome(state),
@@ -216,6 +249,7 @@ def build_trajectory(state: EnergyIntelligenceBoard) -> dict:
             "delivery_lag":       proc_plan.get("delivery_lag"),
             "cargoes":            cargoes,
         },
+        "economic_impact":  econ_digest,
         "news_evidence": {
             "article_count":  len(raw_signals),
             "by_corridor":    news_evidence_by_corridor,

@@ -254,6 +254,72 @@ def build_components(summary: dict, twin_state: dict) -> list[dict]:
             "tone": "critical",
         })
 
+    # ── Economic impact tiles ──
+    econ = plan.get("economic_impact")
+    if econ and (econ.get("total_exposure_usd") or econ.get("do_nothing_cost_usd")):
+        econ_items = []
+        if econ.get("total_exposure_usd"):
+            econ_items.append({
+                "label": "Economic exposure",
+                "value": f"${round(econ['total_exposure_usd'] / 1e9, 2)} bn",
+                "unit": None, "tone": "critical" if econ["total_exposure_usd"] > 1e9 else "elevated",
+            })
+        if econ.get("do_nothing_cost_usd"):
+            econ_items.append({
+                "label": "Do-nothing cost",
+                "value": f"${round(econ['do_nothing_cost_usd'] / 1e9, 2)} bn",
+                "unit": None, "tone": "critical",
+            })
+        if econ.get("plan_net_benefit_usd") and econ["plan_net_benefit_usd"] > 0:
+            econ_items.append({
+                "label": "Plan saves",
+                "value": f"${round(econ['plan_net_benefit_usd'] / 1e9, 2)} bn",
+                "unit": "vs doing nothing", "tone": "ok",
+            })
+        spike = econ.get("brent_spike_estimate") or {}
+        if spike.get("delta_usd"):
+            econ_items.append({
+                "label": "Brent spike est.",
+                "value": f"+${spike['delta_usd']}",
+                "unit": "/bbl", "tone": "elevated",
+            })
+        if econ.get("import_bill_delta_usd"):
+            econ_items.append({
+                "label": "Import bill delta",
+                "value": f"${round(econ['import_bill_delta_usd'] / 1e9, 2)} bn",
+                "unit": None, "tone": "elevated",
+            })
+        if econ.get("cpi_impact_bps"):
+            econ_items.append({
+                "label": "CPI impact",
+                "value": f"+{econ['cpi_impact_bps']}",
+                "unit": "bps", "tone": "elevated",
+            })
+        if econ_items:
+            components.append({
+                "type": "metrics",
+                "title": "Economic impact",
+                "items": econ_items,
+            })
+
+        # ── Recovery actions table ──
+        recovery = econ.get("recovery_actions") or []
+        if recovery:
+            components.append({
+                "type": "recovery_table",
+                "title": "Recovery levers (ranked by net benefit)",
+                "rows": recovery,
+            })
+
+        # ── Subsidy vs pass-through ──
+        sub = econ.get("subsidy_vs_passthrough")
+        if sub:
+            components.append({
+                "type": "policy_tradeoff",
+                "title": "Policy tradeoff: subsidy vs pass-through",
+                "data": sub,
+            })
+
     # ── Mix table ──
     actions = proc.get("committed_actions", []) or []
     if actions or gap > _TOL:
@@ -313,6 +379,16 @@ def suggest_follow_ups(summary: dict) -> list[str]:
         pool.append("Which suppliers or outputs were flagged, and why?")
     if critical > 0:
         pool.append("Which refineries are critical and what are their reroute options?")
+
+    econ = plan.get("economic_impact")
+    if econ and econ.get("total_exposure_usd"):
+        pool.append("What does this disruption cost us in total?")
+    if econ and econ.get("do_nothing_cost_usd") and gap > _TOL:
+        pool.append("What if we do nothing and ride it out on reserves?")
+    if econ and econ.get("recovery_actions"):
+        pool.append("What are the cheapest ways to recover, ranked?")
+    if econ and econ.get("subsidy_vs_passthrough"):
+        pool.append("Should we subsidize fuel prices or let them rise?")
 
     # Top corridor by IMPACT when the twin decomposed the gap (the corridor
     # costing the most, debugger.md #20); by score otherwise.

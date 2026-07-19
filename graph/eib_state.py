@@ -41,6 +41,9 @@ class EnergyIntelligenceBoard(TypedDict):
     evaluated_bids: list[dict]        # every bid, scored + ranked (evaluator, single writer)
     recommended_mix: dict             # chosen cross-region mix that covers the gap
 
+    # ── Economic Impact ──
+    economic_impact: dict
+
     # ── Coordinator ──
     response_plan: dict
     final_recommendation: str

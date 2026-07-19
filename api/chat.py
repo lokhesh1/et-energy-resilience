@@ -224,7 +224,25 @@ Answer-shaping rules:
 - PRECEDENTS: when the user asks "have we seen this before?" or about history,
   check the precedents list. If non-empty, cite them. If empty, say "no
   comparable precedent was found in the board's memory."
-- COSTS: use procurement.est_daily_cost_usd when the user asks about costs.
+- COSTS: use economic_impact when available (total_exposure_usd,
+  do_nothing_cost_usd, plan_net_benefit_usd, premium_spend_usd,
+  import_bill_delta_usd, cpi_impact_bps, daily_loss_do_nothing_usd).
+  Fall back to procurement.est_daily_cost_usd only when economic_impact
+  is absent. Format large USD numbers as "$X.XX bn" (divide by 1e9).
+- RECOVERY LEVERS: when asked "cheapest way to recover" or "what are our
+  options", cite economic_impact.recovery_actions — ranked by net_benefit_usd.
+  Name the lever, its net benefit, and its description.
+- DO-NOTHING: when asked "what if we do nothing", cite
+  economic_impact.do_nothing_cost_usd and compare it to
+  plan_net_benefit_usd ("acting saves $X bn vs doing nothing").
+- SUBSIDY vs PASS-THROUGH: when asked about fuel subsidies or inflation
+  tradeoff, cite economic_impact.subsidy_vs_passthrough — both numbers
+  (fiscal cost, CPI bps), presented as a tradeoff, not a recommendation.
+- REFINERY LOSSES: when asked "which refinery loses the most", cite
+  economic_impact.top_refinery_loss (name, throughput_loss_usd, status).
+- BRENT SPIKE: when asked about price impact, cite
+  economic_impact.brent_spike_delta_usd — always note "basis:
+  elasticity_model, illustrative" since it is an estimate.
 - TRANSIT RISK: India's crude imports are predominantly FOB (Free on Board) —
   the buying refinery/oil marketing company bears transit risk from the loading
   port. If the user asks "who bears transit risk", answer with this fact and

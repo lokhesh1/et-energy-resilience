@@ -330,6 +330,30 @@ def _priority_actions(escalation: str, residual: float, actions: list[dict],
     return out
 
 
+def _extract_economic_impact(state: EnergyIntelligenceBoard) -> dict | None:
+    """Copy the EIM's output into the plan. None if EIM didn't run or produced
+    nothing (pre-EIM state / zero-gap run). Coordinator never invents numbers."""
+    econ = state.get("economic_impact")
+    if not econ or not isinstance(econ, dict):
+        return None
+    if econ.get("total_exposure_usd", 0) == 0 and econ.get("do_nothing_cost_usd", 0) == 0:
+        return None
+    return {
+        "total_exposure_usd":       econ.get("total_exposure_usd"),
+        "do_nothing_cost_usd":      econ.get("do_nothing_cost_usd"),
+        "plan_net_benefit_usd":     econ.get("plan_net_benefit_usd"),
+        "brent_spike_estimate":     econ.get("brent_spike_estimate"),
+        "import_bill_delta_usd":    econ.get("macro", {}).get("import_bill_delta_usd"),
+        "cpi_impact_bps":           econ.get("macro", {}).get("cpi_impact_bps"),
+        "cad_gdp_impact_pct":       econ.get("macro", {}).get("cad_gdp_impact_pct"),
+        "recovery_actions":         econ.get("recovery_actions"),
+        "subsidy_vs_passthrough":   econ.get("subsidy_vs_passthrough"),
+        "recovery_timeline":        econ.get("recovery_timeline", {}).get("days_to_normal"),
+        "refinery_losses":          econ.get("micro", {}).get("refinery_losses"),
+        "guardrail_flags":          econ.get("guardrail_flags"),
+    }
+
+
 def _build_response_plan(state: EnergyIntelligenceBoard,
                          block_flags: list[dict], now: str) -> dict:
     """Assemble the full plan from state. Every number here is copied or recomputed
@@ -441,6 +465,7 @@ def _build_response_plan(state: EnergyIntelligenceBoard,
             "spr_bridge":        spr_bridge,
             "delivery_lag":      delivery_lag,
         },
+        "economic_impact": _extract_economic_impact(state),
         "priority_actions": _priority_actions(escalation, residual, actions,
                                               disrupted, block_flags, spr_bridge,
                                               watch_risks=watch_risks,
@@ -578,6 +603,20 @@ def _template_recommendation(plan: dict) -> str:
         tail += (f" Note: {len(risky)} committed cargo(es) transit partially "
                  f"disrupted corridors (up to {round(worst * 100)}% choked) — "
                  f"coverage counts expected delivery, not barrels bought.")
+
+    econ = plan.get("economic_impact")
+    if econ and econ.get("total_exposure_usd"):
+        exposure_bn = round(econ["total_exposure_usd"] / 1e9, 2)
+        econ_parts = [f"Estimated economic exposure ${exposure_bn} bn"]
+        if econ.get("import_bill_delta_usd"):
+            bill_bn = round(econ["import_bill_delta_usd"] / 1e9, 2)
+            econ_parts.append(f"import bill +${bill_bn} bn")
+        if econ.get("cpi_impact_bps"):
+            econ_parts.append(f"CPI +{econ['cpi_impact_bps']} bps")
+        if econ.get("plan_net_benefit_usd") and econ["plan_net_benefit_usd"] > 0:
+            benefit_bn = round(econ["plan_net_benefit_usd"] / 1e9, 2)
+            econ_parts.append(f"plan saves ${benefit_bn} bn vs doing nothing")
+        tail += " " + "; ".join(econ_parts) + "."
 
     return (f"{esc}: {driver} puts {sit['gap_mbd']} mbd of India-bound crude at "
             f"risk.{crit} {tail}")

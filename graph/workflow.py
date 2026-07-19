@@ -3,7 +3,7 @@
 The topology IS the routing. No LLM ever decides "which agent next"; the data
 dependencies fix the order:
 
-    GRI ─► DSM ─► SCTD ─► [ west_africa ∥ americas ∥ spot ] ─► bid_evaluator ─► coordinator
+    GRI ─► DSM ─► SCTD ─► [ west_africa ∥ americas ∥ spot ] ─► bid_evaluator ─► economic_impact ─► coordinator
 
 The only parallel step is the three regional bidders (fan-out from SCTD,
 fan-in to the evaluator) — they have no dependency on each other and append to
@@ -33,6 +33,7 @@ from agents.procurement.west_africa_agent import west_africa_node
 from agents.procurement.americas_agent import americas_node
 from agents.procurement.spot_market_agent import spot_market_node
 from agents.procurement.bid_evaluator import bid_evaluator_node
+from agents.economic_impact import eim_node
 from agents.distiller.pod import learn_async
 from eib_guardrails.audit_logger import log_run
 
@@ -67,6 +68,7 @@ WEST_AFRICA = "west_africa"
 AMERICAS = "americas"
 SPOT = "spot"
 BID_EVALUATOR = "bid_evaluator"
+ECONOMIC_IMPACT = "economic_impact"
 COORDINATOR = "coordinator"
 
 _BIDDERS = [WEST_AFRICA, AMERICAS, SPOT]
@@ -111,8 +113,11 @@ def build_graph(checkpointer=None):
     g.add_node(BID_EVALUATOR, wrap(bid_evaluator_node, BID_EVALUATOR))
     g.add_edge(_BIDDERS, BID_EVALUATOR)
 
+    g.add_node(ECONOMIC_IMPACT, wrap(eim_node, ECONOMIC_IMPACT))
+    g.add_edge(BID_EVALUATOR, ECONOMIC_IMPACT)
+
     g.add_node(COORDINATOR, wrap(coordinator_node, COORDINATOR))
-    g.add_edge(BID_EVALUATOR, COORDINATOR)
+    g.add_edge(ECONOMIC_IMPACT, COORDINATOR)
     g.add_edge(COORDINATOR, END)
 
     return g.compile(checkpointer=checkpointer or MemorySaver())
@@ -168,6 +173,7 @@ def initial_state(query: str = "", scenario_params: dict | None = None) -> Energ
         "bids": [],
         "evaluated_bids": [],
         "recommended_mix": {},
+        "economic_impact": {},
         "response_plan": {},
         "final_recommendation": "",
         "retrieved_memories": [],

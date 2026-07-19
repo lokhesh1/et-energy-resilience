@@ -353,6 +353,80 @@ def _render_mix_table() -> None:
         )
 
 
+def _render_economic_impact() -> None:
+    components = st.session_state.get("last_components", [])
+    econ_comp = next((c for c in components
+                      if c.get("type") == "metrics" and c.get("title") == "Economic impact"), None)
+    if not econ_comp:
+        return
+    items = econ_comp.get("items", [])
+    if not items:
+        return
+    st.markdown("**Economic impact**")
+    cols = st.columns(min(len(items), 4))
+    for i, item in enumerate(items):
+        tone = item.get("tone", "ok")
+        css = _TONE_CSS.get(tone, _TONE_CSS["ok"])
+        value = item["value"]
+        unit = item.get("unit") or ""
+        display = f"{value} {unit}".strip() if unit else str(value)
+        label = item["label"]
+        with cols[i % len(cols)]:
+            st.markdown(
+                f'<div style="padding:10px 12px;border-radius:6px;min-height:80px;{css}">'
+                f'<div style="font-size:11px;font-weight:600;text-transform:uppercase;'
+                f'letter-spacing:.04em;opacity:.7;line-height:14px;min-height:28px;">'
+                f'{label}</div>'
+                f'<div style="font-size:22px;font-weight:700;margin-top:2px;">'
+                f'{display}</div></div>',
+                unsafe_allow_html=True,
+            )
+
+
+def _render_recovery_table() -> None:
+    components = st.session_state.get("last_components", [])
+    comp = next((c for c in components if c.get("type") == "recovery_table"), None)
+    if not comp:
+        return
+    st.markdown("**Recovery levers (ranked by net benefit)**")
+    rows = comp.get("rows", [])
+    if rows:
+        import pandas as pd
+        display_keys = [
+            ("lever",           "Lever"),
+            ("description",     "Description"),
+            ("avoided_loss_usd", "Avoided loss ($)"),
+            ("lever_cost_usd",  "Cost ($)"),
+            ("net_benefit_usd", "Net benefit ($)"),
+            ("time_to_effect_days", "Time (days)"),
+        ]
+        df_rows: list[dict] = []
+        for r in rows:
+            row: dict = {}
+            for key, label in display_keys:
+                val = r.get(key, "")
+                if key in ("avoided_loss_usd", "lever_cost_usd", "net_benefit_usd"):
+                    if isinstance(val, (int, float)):
+                        val = f"${val:,.0f}"
+                row[label] = val
+            df_rows.append(row)
+        st.dataframe(
+            pd.DataFrame(df_rows), use_container_width=True, hide_index=True,
+        )
+
+    tradeoff = next((c for c in components if c.get("type") == "policy_tradeoff"), None)
+    if tradeoff:
+        data = tradeoff.get("data", {})
+        if data:
+            fiscal = data.get("subsidy_fiscal_cost_usd", 0)
+            cpi = data.get("passthrough_cpi_bps", 0)
+            st.info(
+                f"**Policy tradeoff — subsidy vs pass-through:** "
+                f"Subsidize fuel = ${fiscal / 1e9:.2f} bn fiscal cost; "
+                f"pass through = +{cpi} bps CPI impact."
+            )
+
+
 def _render_priority_actions() -> None:
     summary = st.session_state.get("last_summary")
     if not summary:
@@ -431,6 +505,8 @@ def main() -> None:
             _render_metrics()
             _render_run_warnings()
             _render_news_sources()
+            _render_economic_impact()
+            _render_recovery_table()
             _render_mix_table()
             _render_priority_actions()
         with right:
