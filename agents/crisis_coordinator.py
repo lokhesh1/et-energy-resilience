@@ -209,11 +209,62 @@ def _spr_bridge(residual: float, scenarios: list[dict]) -> dict | None:
         return None
 
 
+def _delivery_lag(gap: float, residual: float, actions: list[dict]) -> dict | None:
+    """The committed mix can close the gap ON PAPER while every cargo is still
+    weeks of transit away — until deliveries land the physical shortfall stays
+    open. Quantify that window (first cargo, day of full coverage) and size the
+    SPR drawdown that bridges it, so "gap closed" is never read as "supply
+    normal today". Only for the covered case — an uncovered residual already
+    owns the SPR story via `_spr_bridge`. Best-effort: None just omits the lag."""
+    if gap <= _TOL or residual > _TOL or not actions:
+        return None
+    timed = []
+    for a in actions:
+        try:
+            days = float(a.get("transit_days") or 0)
+            vol = float(a.get("effective_volume_mbd") or a.get("volume_mbd") or 0)
+        except (TypeError, ValueError):
+            continue
+        if days > 0 and vol > 0:
+            timed.append((days, vol))
+    if not timed:
+        return None
+    timed.sort()
+    first = timed[0][0]
+    # Full coverage = the transit day by which cumulative expected delivery
+    # meets the gap (cargoes land in transit order).
+    cum, full = 0.0, timed[-1][0]
+    for days, vol in timed:
+        cum += vol
+        if cum >= gap - _TOL:
+            full = days
+            break
+    lag: dict = {"first_delivery_days": round(first, 1),
+                 "full_coverage_days":  round(full, 1)}
+    try:
+        # Conservative: the SPR must carry the WHOLE gap until cargoes arrive
+        # (early partial deliveries only shorten the tail, never lengthen it).
+        spr = calculate_drawdown(gap, duration_days=full)
+        d = spr.get("data", {})
+        lag["spr_interim"] = {
+            "drawdown_mbd":    d.get("drawdown_mbd"),
+            "bridge_fraction": d.get("bridge_fraction"),
+            "unbridged_mbd":   d.get("unbridged_mbd"),
+            "days_of_cover":   d.get("days_of_cover"),
+            "covers_duration": d.get("covers_duration"),
+            "adequacy":        d.get("adequacy"),
+        }
+    except Exception:
+        pass
+    return lag
+
+
 def _priority_actions(escalation: str, residual: float, actions: list[dict],
                       disrupted: list[str], block_flags: list[dict],
                       spr_bridge: dict | None = None,
                       watch_risks: list[dict] | None = None,
-                      assessment_failed: bool = False) -> list[str]:
+                      assessment_failed: bool = False,
+                      delivery_lag: dict | None = None) -> list[str]:
     """Human-readable next steps, deterministic from the plan. Ordered by urgency:
     the uncovered gap first, then the cargoes to secure, then what to watch."""
     out: list[str] = []
@@ -233,6 +284,18 @@ def _priority_actions(escalation: str, residual: float, actions: list[dict],
             if spr_bridge.get("adequacy") == "partial_bridge":
                 msg += (f" ({spr_bridge['unbridged_mbd']} mbd exceeds the max "
                         f"drawdown rate — curtailment still required)")
+            msg += "."
+        out.append(msg)
+    if delivery_lag:
+        spr_i = delivery_lag.get("spr_interim") or {}
+        msg = (f"INTERIM: the gap stays physically open until cargoes land — "
+               f"first delivery ~{delivery_lag['first_delivery_days']:g} days out, "
+               f"full coverage ~{delivery_lag['full_coverage_days']:g} days.")
+        if spr_i.get("drawdown_mbd"):
+            msg += f" Draw SPR {spr_i['drawdown_mbd']} mbd to bridge the wait"
+            if spr_i.get("adequacy") == "partial_bridge":
+                msg += (f" ({spr_i['unbridged_mbd']} mbd exceeds the max drawdown "
+                        f"rate — demand-side measures until first deliveries)")
             msg += "."
         out.append(msg)
     for a in actions:
@@ -344,6 +407,7 @@ def _build_response_plan(state: EnergyIntelligenceBoard,
         assessment_failed=assessment_failed,
     )
     spr_bridge = _spr_bridge(residual, state.get("scenarios", []) or [])
+    delivery_lag = _delivery_lag(gap, residual, actions)
 
     unresolved = [f"{f['agent']}/{f['rule_id']}: {f['message']}" for f in block_flags]
     if residual > _TOL:
@@ -374,11 +438,13 @@ def _build_response_plan(state: EnergyIntelligenceBoard,
             "committed_actions": actions,
             "est_daily_cost_usd": mix.get("est_daily_cost_usd"),
             "spr_bridge":        spr_bridge,
+            "delivery_lag":      delivery_lag,
         },
         "priority_actions": _priority_actions(escalation, residual, actions,
                                               disrupted, block_flags, spr_bridge,
                                               watch_risks=watch_risks,
-                                              assessment_failed=assessment_failed),
+                                              assessment_failed=assessment_failed,
+                                              delivery_lag=delivery_lag),
         "unresolved_issues": unresolved,
         "generated_at": now,
     }
@@ -482,8 +548,27 @@ def _template_recommendation(plan: dict) -> str:
             tail += (f" SPR can bridge {bridge['drawdown_mbd']} mbd for "
                      f"~{bridge['days_of_cover']} days.")
     else:
-        tail = (f"Procurement secures {proc['covered_mbd']} mbd "
-                f"({len(proc['committed_actions'])} cargo(es)), closing the gap.")
+        n = len(proc["committed_actions"])
+        lag = proc.get("delivery_lag")
+        if lag:
+            # "Closed" on paper only: no cargo has landed yet. Say when supply
+            # actually normalises and what bridges the wait — the exact
+            # CRITICAL-but-"fully closed" confusion from the 2026-07-19 run.
+            tail = (f"Procurement secures {proc['covered_mbd']} mbd ({n} "
+                    f"cargo(es)), closing the gap once deliveries land — first "
+                    f"cargo ~{lag['first_delivery_days']:g} days out, full "
+                    f"coverage ~{lag['full_coverage_days']:g} days.")
+            spr_i = lag.get("spr_interim") or {}
+            if spr_i.get("drawdown_mbd"):
+                tail += (f" Until then supply is short: draw SPR "
+                         f"{spr_i['drawdown_mbd']} mbd to bridge")
+                if spr_i.get("adequacy") == "partial_bridge":
+                    tail += (f" ({spr_i['unbridged_mbd']} mbd unbridged — "
+                             f"demand-side measures required)")
+                tail += "."
+        else:
+            tail = (f"Procurement secures {proc['covered_mbd']} mbd "
+                    f"({n} cargo(es)), closing the gap.")
 
     risky = [a for a in proc["committed_actions"]
              if float(a.get("delivery_risk_fraction", 0.0) or 0.0) > 0]

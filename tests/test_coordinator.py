@@ -176,6 +176,53 @@ def test_risky_cargo_is_disclosed_and_coverage_risk_discounted():
     assert "partially disrupted" in out["final_recommendation"]
 
 
+# ── Delivery lag (covered on paper ≠ delivered today) ───────────────────────────
+
+def test_covered_gap_surfaces_delivery_lag_and_interim_spr():
+    """The mix closes the gap but every cargo is weeks out: the plan must carry
+    the lag window, an INTERIM priority action, and a narrative that says the
+    gap closes 'once deliveries land' with an SPR bridge for the wait — never a
+    bare 'fully closed' (the 2026-07-19 screenshot confusion)."""
+    fast = _clean_bid(volume=0.9)                          # 20 days
+    slow = dict(_clean_bid(volume=0.6), transit_days_to_india=32)
+    out = _run_node(_state(gap=1.5, covered=1.5, covers_gap=True, critical=1,
+                           components=[fast, slow]))
+    plan = out["response_plan"]
+    lag = plan["procurement"]["delivery_lag"]
+    assert lag["first_delivery_days"] == 20
+    assert lag["full_coverage_days"] == 32                 # needs both cargoes
+    spr_i = lag["spr_interim"]
+    assert spr_i["drawdown_mbd"] == pytest.approx(1.0)     # max drawdown cap
+    assert spr_i["adequacy"] == "partial_bridge"           # 1.5 gap > 1.0 cap
+    assert spr_i["unbridged_mbd"] == pytest.approx(0.5)
+    assert any(a.startswith("INTERIM") for a in plan["priority_actions"])
+    rec = out["final_recommendation"]
+    assert "deliveries land" in rec and "SPR" in rec
+    assert out["constitution_flags"] == []                 # new keys trip nothing
+
+
+def test_full_coverage_day_is_first_cargo_when_it_alone_covers():
+    big = _clean_bid(volume=1.0)                           # 20 days, covers alone
+    late = dict(_clean_bid(volume=0.2), transit_days_to_india=35)
+    out = _run_node(_state(gap=1.0, covered=1.2, covers_gap=True, critical=0,
+                           stressed=1, components=[big, late]))
+    lag = out["response_plan"]["procurement"]["delivery_lag"]
+    assert lag["first_delivery_days"] == 20
+    assert lag["full_coverage_days"] == 20
+
+
+def test_no_delivery_lag_when_gap_uncovered_or_absent():
+    """An uncovered residual owns the SPR story via the existing bridge; a calm
+    run has no lag to report."""
+    uncovered = _run_node(_state(gap=1.0, covered=0.4, covers_gap=False,
+                                 critical=0, components=[_clean_bid(volume=0.4)]))
+    assert uncovered["response_plan"]["procurement"]["delivery_lag"] is None
+    calm = _run_node(_state(gap=0.0, covered=0.0, covers_gap=True, critical=0,
+                            components=[], disrupted=False,
+                            corridor_risk={"strait_of_hormuz": 0.2}))
+    assert calm["response_plan"]["procurement"]["delivery_lag"] is None
+
+
 # ── Narrative ────────────────────────────────────────────────────────────────────
 
 def test_recommendation_falls_back_to_template_when_llm_empty():

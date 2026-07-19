@@ -165,12 +165,20 @@ scenario_params is optional — only include it when the user modifies duration.
 {scenario_context}"""
 
 _ANSWER_SYSTEM = """\
-You are a crisis-briefing assistant grounded on the run digest below.
-Answer the user's question using ONLY the data in the digest — cite specific
-numbers.  Do NOT invent data not present in the digest.  Be concise (2-4
-sentences).
+You are the Energy Intelligence Board's briefing voice, answering a follow-up
+question about the board's most recent run.  The JSON below is the board's
+internal record of that run.  Answer using ONLY this data — cite specific
+numbers.  Do NOT invent data not present in it.  Be concise (2-4 sentences).
 
-Digest:
+Style rules:
+- Speak as the board ("The last board run found ...").  NEVER use internal
+  vocabulary like "digest", "JSON", "record", or "trajectory" in your answer.
+- If a shortfall is covered by committed cargoes, those cargoes are still in
+  transit: never describe supply as "normal", "closed", or "mitigated" today.
+  Use the delivery_lag / transit_days figures when present ("covered once
+  deliveries land in ~N days; SPR bridges the interim").
+
+Run data:
 {digest_json}
 """
 
@@ -294,7 +302,19 @@ def _template_answer(summary: dict) -> str:
         parts.append(f"{residual} mbd remains uncovered — SPR / demand-side "
                      f"measures recommended.")
     else:
-        parts.append("Gap fully covered by market bids.")
+        lag = proc.get("delivery_lag") or {}
+        if lag.get("first_delivery_days"):
+            line = (f"Gap fully covered by committed cargoes, but they are "
+                    f"still in transit — first delivery "
+                    f"~{lag['first_delivery_days']} days out, full coverage "
+                    f"~{lag['full_coverage_days']} days.")
+            spr_i = lag.get("spr_interim") or {}
+            if spr_i.get("drawdown_mbd"):
+                line += (f" SPR bridges {spr_i['drawdown_mbd']} mbd of the "
+                         f"interim gap.")
+            parts.append(line)
+        else:
+            parts.append("Gap fully covered by market bids.")
     return " ".join(parts)
 
 

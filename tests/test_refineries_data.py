@@ -99,3 +99,10 @@ def test_dependencies_reference_known_corridors(refineries):
         for cid in r["corridor_dependency"]:
             assert cid in KNOWN_CORRIDORS, \
                 f"{r['id']}: unknown corridor id '{cid}' in corridor_dependency"
+
+
+def test_every_refinery_has_a_discharge_or_import_port(refineries):
+    # voyage-level rerouting needs to know WHERE each refinery's crude lands
+    for r in refineries:
+        assert r.get("port") or r.get("import_port"), \
+            f"{r['id']} has neither port nor import_port"

@@ -27,6 +27,7 @@ from pathlib import Path
 from graph.eib_state import EnergyIntelligenceBoard, StigmergyMarker
 from tools.corridor_status import get_corridor_status
 from tools.geospatial_mapper import build_supply_chain_map
+from tools.route_ranker import rank_routes
 from memory.xmemory import XMemory
 
 _REFINERIES_PATH = Path(__file__).parent.parent / "data" / "refineries.json"
@@ -134,6 +135,55 @@ def _build_routes(scenarios: list[dict], corridors_by_id: dict[str, dict]) -> li
             "overloaded":         alt_baseline > 0 and volume > alt_baseline,
         })
     return routes
+
+
+def _build_refinery_reroutes(impacts: list[dict],
+                             fraction_by_corridor: dict[str, float]) -> list[dict]:
+    """Voyage-level reroute options per AFFECTED refinery — a reroute belongs to
+    a voyage (loading zone → the refinery's own harbour), not to a corridor.
+    For each stressed/critical refinery, each disrupted supply lane it depends
+    on gets the route_ranker's answer: feasible alternates, or the honest
+    `no_maritime_alternative` (e.g. Hormuz — a dead end) with the pipeline
+    bypass + fallback advice. Deterministic; the lane advice is computed once
+    per corridor and shared."""
+    disrupted = {cid: f for cid, f in fraction_by_corridor.items() if f > 0.0}
+    if not disrupted:
+        return []
+    lane_advice = {cid: rank_routes(cid, fraction_by_corridor)["data"]
+                   for cid in disrupted}
+    by_id = {r["id"]: r for r in _REFINERIES}
+    out: list[dict] = []
+    for imp in impacts:
+        if imp["status"] == "normal":
+            continue
+        raw = by_id.get(imp["id"], {})
+        deps = raw.get("corridor_dependency", {}) or {}
+        lanes: list[dict] = []
+        for cid, share in deps.items():
+            frac = disrupted.get(cid, 0.0)
+            if frac <= 0.0:
+                continue
+            advice = lane_advice[cid]
+            lanes.append({
+                "corridor":                cid,
+                "share":                   float(share),
+                "at_risk_mbd":             round(imp["capacity_mbd"]
+                                                 * float(share) * frac, 4),
+                "no_maritime_alternative": advice.get("no_maritime_alternative", False),
+                "bypass":                  advice.get("bypass"),
+                "options":                 advice.get("options", []),
+                "mitigation":              advice.get("fallback_advice"),
+            })
+        if lanes:
+            lanes.sort(key=lambda l: l["at_risk_mbd"], reverse=True)
+            out.append({
+                "refinery":         imp["id"],
+                "name":             imp["name"],
+                "port":             raw.get("port") or raw.get("import_port"),
+                "feed_at_risk_mbd": imp["feed_at_risk_mbd"],
+                "lanes":            lanes,
+            })
+    return out
 
 
 def _deposit_bottleneck_pheromones(
@@ -272,6 +322,7 @@ def sctd_node(state: EnergyIntelligenceBoard) -> dict:
         "routes":                   routes,
         "total_india_shortfall_mbd": total_shortfall,
         "shortfall_by_corridor":    shortfall_by_corridor,
+        "refinery_reroutes":        _build_refinery_reroutes(impacts, fraction_by_corridor),
         "critical_count":           sum(1 for i in impacts if i["status"] == "critical"),
         "stressed_count":           sum(1 for i in impacts if i["status"] == "stressed"),
         "geojson":                  geo["data"]["geojson"],

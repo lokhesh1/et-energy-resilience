@@ -136,6 +136,20 @@ def test_trajectory_caps_list_sizes():
     assert len(traj["scenarios"]) == ed._MAX_ITEMS
 
 
+def test_trajectory_carries_delivery_lag_and_transit_days():
+    """'But supplies are normal how?' must be answerable: the digest carries the
+    delivery-lag window and each cargo's transit days."""
+    s = _covered_state()
+    s["recommended_mix"]["components"][0]["transit_days_to_india"] = 20
+    s["response_plan"]["procurement"]["delivery_lag"] = {
+        "first_delivery_days": 20, "full_coverage_days": 20,
+        "spr_interim": {"drawdown_mbd": 1.0, "adequacy": "full_bridge"},
+    }
+    traj = build_trajectory(s)
+    assert traj["procurement"]["delivery_lag"]["first_delivery_days"] == 20
+    assert traj["procurement"]["cargoes"][0]["transit_days"] == 20
+
+
 def test_trajectory_carries_stressed_refinery_names():
     """A tension run can have 12 stressed / 0 critical — 'which refineries?'
     must still be answerable from the digest."""
@@ -232,3 +246,32 @@ def test_node_survives_empty_engine_report():
     entry = out["audit_trail"][0]
     assert entry["episodic_written"] == 0
     assert entry["skill_written"] is False
+
+
+def test_trajectory_carries_refinery_reroutes_compactly():
+    state = {
+        "twin_state": {
+            "total_india_shortfall_mbd": 1.0,
+            "refinery_reroutes": [{
+                "refinery": "jamnagar_ril", "name": "Jamnagar (RIL)",
+                "port": "Sikka (Jamnagar)", "feed_at_risk_mbd": 0.558,
+                "lanes": [{
+                    "corridor": "strait_of_hormuz", "share": 0.45,
+                    "at_risk_mbd": 0.558, "no_maritime_alternative": True,
+                    "bypass": {"capacity_mbd": 6.5, "kind": "pipeline"},
+                    "options": [],
+                    "mitigation": "re-source from alternate origins or bridge from SPR",
+                }],
+            }],
+        },
+    }
+    traj = build_trajectory(state)
+    rr = traj["twin"]["refinery_reroutes"]
+    assert rr[0]["refinery"] == "Jamnagar (RIL)"
+    assert rr[0]["port"] == "Sikka (Jamnagar)"
+    lane = rr[0]["lanes"][0]
+    assert lane["no_maritime_alternative"] is True
+    assert lane["bypass_capacity_mbd"] == 6.5
+    assert "re-source" in lane["mitigation"]
+    # compact: the raw bypass dict / share fields are not dragged along
+    assert "bypass" not in lane and "share" not in lane

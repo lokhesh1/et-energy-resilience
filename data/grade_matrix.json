@@ -1,5 +1,16 @@
 {
-  "_note": "ILLUSTRATIVE — crude grade properties (API gravity, sulfur) are approximate public figures; the light_sweet/medium_sour/heavy_sour band and the flexibility_rules mapping are a SIMPLIFIED proxy for real refinery configuration (Nelson complexity, hydrotreating/coking capacity). NOT sourced from an authoritative dataset. 'type' is stored explicitly on each grade so grade_lookup stays a pure lookup (no threshold math at runtime). Calibrate before treating compatibility as real. Tracked in CLAUDE.md backlog.",
+  "_note": "ILLUSTRATIVE — crude grade properties (API gravity, sulfur) are approximate public figures; the light_sweet/medium_sour/heavy_sour band and the flexibility_rules mapping are a SIMPLIFIED proxy for real refinery configuration (Nelson complexity, hydrotreating/coking capacity). NOT sourced from an authoritative dataset. 'type' is stored explicitly on each grade so grade_lookup stays a pure lookup (no threshold math at runtime). Calibrate before treating compatibility as real. Tracked in CLAUDE.md backlog. EXCEPTION: 'india_basket_blend' below is a REAL, sourced monthly datapoint — see its own '_source'.",
+  "india_basket_blend": {
+    "_source": "PPAC (Petroleum Planning & Analysis Cell) — 'Crude Oil FOB Price (Indian Basket)' workbook, table posted 17.07.2026, period 2026-27. User-supplied file, verified 2026-07-19.",
+    "description": "The Indian Basket is a derived blend of Sweet grade (Brent Dated) and Sour grade (Oman & Dubai average) actually imported by Indian refineries that month — the real sweet:sour split India is running, as opposed to the illustrative per-grade table below.",
+    "monthly_ratio_sweet_to_sour_pct": {
+      "2026-04": [61.02, 38.98],
+      "2026-05": [70.0, 30.0],
+      "2026-06": [71.02, 28.98],
+      "2026-07": [79.40, 20.60]
+    },
+    "fob_price_usd_per_bbl_as_of_2026_07_16": 81.42
+  },
   "grades": {
     "bonny_light": {
       "name": "Bonny Light",

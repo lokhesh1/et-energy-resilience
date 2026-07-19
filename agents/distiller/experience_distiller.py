@@ -103,8 +103,9 @@ def build_trajectory(state: EnergyIntelligenceBoard) -> dict:
     refineries = twin.get("refineries", []) or []
 
     # Reroutes are follow-up gold ("what are the reroute options?") — carry them
-    # compactly. Corridor-level by nature: reroutes belong to corridors, not to
-    # individual refineries.
+    # compactly: the corridor-level flow view AND the voyage-level per-refinery
+    # options (which lanes are hit, feasible alternates or the honest "no sea
+    # detour — pipeline bypass / re-source / SPR").
     routes = [{
         "from_corridor":      r.get("from_corridor"),
         "to_corridor":        r.get("to_corridor"),
@@ -114,12 +115,28 @@ def build_trajectory(state: EnergyIntelligenceBoard) -> dict:
         "overloaded":         r.get("overloaded"),
     } for r in (twin.get("routes", []) or [])[:_MAX_ITEMS]]
 
+    refinery_reroutes = [{
+        "refinery":         rr.get("name"),
+        "port":             rr.get("port"),
+        "feed_at_risk_mbd": rr.get("feed_at_risk_mbd"),
+        "lanes": [{
+            "corridor":                l.get("corridor"),
+            "at_risk_mbd":             l.get("at_risk_mbd"),
+            "no_maritime_alternative": l.get("no_maritime_alternative"),
+            "bypass_capacity_mbd":     (l.get("bypass") or {}).get("capacity_mbd"),
+            "options":                 [o.get("alt_route")
+                                        for o in (l.get("options") or [])[:2]],
+            "mitigation":              l.get("mitigation"),
+        } for l in (rr.get("lanes") or [])[:2]],
+    } for rr in (twin.get("refinery_reroutes", []) or [])[:_MAX_ITEMS]]
+
     cargoes = [{
         "supplier":          c.get("supplier"),
         "region":            c.get("region"),
         "grade":             c.get("grade"),
         "volume_mbd":        c.get("volume_mbd"),
         "delivery_corridor": c.get("delivery_corridor"),
+        "transit_days":      c.get("transit_days_to_india"),
     } for c in (mix.get("components", []) or [])[:_MAX_ITEMS]]
 
     return {
@@ -143,12 +160,16 @@ def build_trajectory(state: EnergyIntelligenceBoard) -> dict:
             "disrupted_corridors": [c.get("id") for c in (twin.get("corridors", []) or [])
                                     if float(c.get("disruption_fraction", 0.0) or 0.0) > 0.0],
             "reroutes":            routes,
+            "refinery_reroutes":   refinery_reroutes,
         },
         "procurement": {
             "covered_mbd":      mix.get("total_volume_mbd"),
             "coverage_ratio":   mix.get("coverage_ratio"),
             "covers_gap":       mix.get("covers_gap"),
             "residual_gap_mbd": (plan.get("procurement", {}) or {}).get("residual_gap_mbd"),
+            # A covered gap with cargoes still at sea is NOT normal supply today —
+            # the follow-up "but supplies are normal how?" must be answerable.
+            "delivery_lag":     (plan.get("procurement", {}) or {}).get("delivery_lag"),
             "cargoes":          cargoes,
         },
         "unresolved_issues": (plan.get("unresolved_issues", []) or [])[:_MAX_ITEMS],

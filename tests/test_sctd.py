@@ -244,3 +244,38 @@ def test_shortfall_by_corridor_decomposes_total():
 def test_shortfall_by_corridor_empty_when_no_disruption():
     result = _run_sctd({"scenarios": []})
     assert result["twin_state"]["shortfall_by_corridor"] == {}
+
+
+# ── Voyage-level refinery reroutes ─────────────────────────────────────────────
+
+def test_hormuz_closure_yields_no_sea_detour_per_refinery():
+    result = _run_sctd(_hormuz_war())
+    rr = result["twin_state"]["refinery_reroutes"]
+    assert rr, "affected refineries must carry reroute advice"
+    jam = next(x for x in rr if x["refinery"] == "jamnagar_ril")
+    assert jam["port"] == "Sikka (Jamnagar)"
+    hormuz_lane = next(l for l in jam["lanes"] if l["corridor"] == "strait_of_hormuz")
+    # the geographic truth: Hormuz has NO maritime alternative — bypass + advice
+    assert hormuz_lane["no_maritime_alternative"] is True
+    assert hormuz_lane["bypass"]["capacity_mbd"] > 0
+    assert "re-source" in hormuz_lane["mitigation"]
+    assert hormuz_lane["at_risk_mbd"] > 0
+
+
+def test_bab_closure_yields_cape_option_per_refinery():
+    state = {"scenarios": [{
+        "corridor": "bab_el_mandeb", "disruption_fraction": 1.0,
+        "volume_at_risk_mbd": 6.2, "quarantined": False, "reroute": None}]}
+    result = _run_sctd(state)
+    rr = result["twin_state"]["refinery_reroutes"]
+    assert rr
+    lane = rr[0]["lanes"][0]
+    assert lane["corridor"] == "bab_el_mandeb"
+    assert lane["no_maritime_alternative"] is False
+    assert any(o.get("modeled_corridor") == "cape_of_good_hope"
+               for o in lane["options"])
+
+
+def test_refinery_reroutes_empty_when_no_disruption():
+    result = _run_sctd({"scenarios": []})
+    assert result["twin_state"]["refinery_reroutes"] == []

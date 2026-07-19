@@ -527,6 +527,33 @@ def test_template_answer_caveats_blind_all_clear():
     assert "low confidence" not in reply2.lower()
 
 
+def test_template_answer_covered_gap_discloses_delivery_lag():
+    """Covered-on-paper with cargoes still at sea must not read 'fully covered'
+    full stop — the fallback names the transit window and the SPR bridge."""
+    covered = summarize_final({
+        **_FINAL,
+        "response_plan": {
+            "escalation_level": "critical",
+            "situation": {"top_corridor_risks": [
+                {"corridor": "strait_of_hormuz", "score": 0.85,
+                 "event_type": "war_conflict"}]},
+            "procurement": {
+                "covered_mbd": 2.45, "residual_gap_mbd": 0.0,
+                "delivery_lag": {
+                    "first_delivery_days": 19, "full_coverage_days": 35,
+                    "spr_interim": {"drawdown_mbd": 1.0,
+                                    "adequacy": "partial_bridge"}},
+            },
+        },
+        "twin_state": {"total_india_shortfall_mbd": 2.45,
+                       "critical_count": 12, "stressed_count": 0},
+    })
+    reply = chat._template_answer(covered)
+    assert "in transit" in reply
+    assert "19" in reply and "35" in reply
+    assert "SPR" in reply
+
+
 # ── /audit/verify endpoint ──────────────────────────────────────────────────────
 
 def test_audit_verify_ok(client, monkeypatch):
