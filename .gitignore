@@ -10,3 +10,12 @@ data/audit_log.db
 **/CLAUDE.md
 
 info.md
+
+debugger.md
+details.md
+stress_test_prompts.md
+stress_test_result2.md
+stress_test_results.md
+
+docs/commodity_scaling_changes.md
+docs/dynamic_corridor_relationships.md
