@@ -1,0 +1,148 @@
+{
+  "_note": "ILLUSTRATIVE — approximate sea-lane waypoints for the voyage simulation map. Waypoints are hand-placed to hug actual sea space (not cut across land); same 'approximate_manual' status as corridor/refinery coords. NEVER fed to distance/route math — these are VISUAL ONLY, for animating ship markers along plausible paths on a Leaflet map. Each lane runs from the origin loading zone toward India's west coast discharge ports; a full voyage path = [load_port] + lane(delivery_corridor) + [discharge]. Calibrate or replace with real AIS-derived tracks if precision matters.",
+  "ports": {
+    "_note": "Approximate lat/lon for supplier load_ports in suppliers.json + the default Indian discharge anchor. Keys match the load_port field in suppliers.json exactly.",
+    "Bonny":                  {"lat":  4.43, "lon":  7.15},
+    "Qua Iboe Terminal":      {"lat":  4.52, "lon":  7.97},
+    "Girassol FPSO":          {"lat": -7.50, "lon": 12.30},
+    "Dalia FPSO":             {"lat": -7.70, "lon": 12.10},
+    "Houston":                {"lat": 29.75, "lon": -95.10},
+    "Vancouver":              {"lat": 49.28, "lon": -123.10},
+    "Santos":                 {"lat": -23.96, "lon": -46.30},
+    "Fujairah":               {"lat": 25.12, "lon": 56.33},
+    "Ras Tanura":             {"lat": 26.64, "lon": 50.17},
+    "Kharg Island":           {"lat": 29.24, "lon": 50.32},
+    "Rotterdam storage":      {"lat": 51.90, "lon":  4.50},
+    "Lome storage":           {"lat":  6.13, "lon":  1.35},
+    "Jose Terminal":          {"lat": 10.20, "lon": -64.75},
+    "Novorossiysk":           {"lat": 44.72, "lon": 37.78},
+    "Basrah":                 {"lat": 30.50, "lon": 47.80},
+    "_default_india_discharge": {"lat": 22.35, "lon": 69.83, "_note": "Jamnagar/Sikka — India's largest refinery complex, west coast"}
+  },
+  "lanes": {
+    "_note": "Per delivery_corridor, an ordered [lat, lon] waypoint chain from the corridor's origin zone toward Indian west coast. Ships animate along these waypoints. The load_port point is prepended and the discharge point appended at render time — these are the mid-ocean waypoints only.",
+
+    "strait_of_hormuz": [
+      [26.57, 56.25],
+      [25.30, 57.00],
+      [24.00, 60.00],
+      [22.50, 66.00],
+      [22.35, 69.83]
+    ],
+
+    "suez_canal": [
+      [31.30, 32.30],
+      [30.02, 32.55],
+      [27.80, 34.00],
+      [21.50, 38.50],
+      [12.58, 43.33],
+      [12.00, 45.00],
+      [14.00, 52.00],
+      [18.00, 60.00],
+      [20.00, 66.00],
+      [22.35, 69.83]
+    ],
+
+    "bab_el_mandeb": [
+      [12.58, 43.33],
+      [12.00, 45.00],
+      [14.00, 52.00],
+      [18.00, 60.00],
+      [20.00, 66.00],
+      [22.35, 69.83]
+    ],
+
+    "cape_of_good_hope": [
+      [4.00,  5.00],
+      [0.00,  5.00],
+      [-10.00, 8.00],
+      [-20.00, 12.00],
+      [-34.36, 18.47],
+      [-33.00, 28.00],
+      [-25.00, 35.00],
+      [-15.00, 42.00],
+      [-5.00, 48.00],
+      [5.00, 52.00],
+      [12.00, 55.00],
+      [18.00, 60.00],
+      [20.00, 66.00],
+      [22.35, 69.83]
+    ],
+
+    "malacca_strait": [
+      [2.50, 101.30],
+      [5.00, 97.00],
+      [7.00, 90.00],
+      [10.00, 82.00],
+      [10.00, 76.00],
+      [12.92, 74.80]
+    ],
+
+    "panama_canal": [
+      [9.08, -79.68],
+      [10.50, -76.00],
+      [12.00, -72.00],
+      [11.00, -61.00],
+      [8.00, -45.00],
+      [0.00, -30.00],
+      [-10.00, -15.00],
+      [-20.00, 0.00],
+      [-34.36, 18.47],
+      [-33.00, 28.00],
+      [-25.00, 35.00],
+      [-15.00, 42.00],
+      [-5.00, 48.00],
+      [5.00, 52.00],
+      [12.00, 55.00],
+      [18.00, 60.00],
+      [20.00, 66.00],
+      [22.35, 69.83]
+    ],
+
+    "turkish_straits": [
+      [41.12, 29.08],
+      [39.50, 26.00],
+      [37.00, 24.00],
+      [35.00, 27.00],
+      [33.00, 30.00],
+      [31.30, 32.30],
+      [30.02, 32.55],
+      [27.80, 34.00],
+      [21.50, 38.50],
+      [12.58, 43.33],
+      [12.00, 45.00],
+      [14.00, 52.00],
+      [18.00, 60.00],
+      [20.00, 66.00],
+      [22.35, 69.83]
+    ],
+
+    "danish_straits": [
+      [55.87, 12.70],
+      [57.00, 8.00],
+      [52.00, 2.00],
+      [48.00, -5.00],
+      [43.00, -9.50],
+      [36.00, -6.00],
+      [35.90, -5.50],
+      [33.00, -8.00],
+      [28.00, -15.00],
+      [20.00, -17.50],
+      [14.80, -17.50],
+      [4.00,  5.00],
+      [0.00,  5.00],
+      [-10.00, 8.00],
+      [-20.00, 12.00],
+      [-34.36, 18.47],
+      [-33.00, 28.00],
+      [-25.00, 35.00],
+      [-15.00, 42.00],
+      [-5.00, 48.00],
+      [5.00, 52.00],
+      [12.00, 55.00],
+      [18.00, 60.00],
+      [20.00, 66.00],
+      [22.35, 69.83]
+    ]
+  }
+}
