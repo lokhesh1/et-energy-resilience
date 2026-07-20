@@ -284,10 +284,10 @@ html,body,#map{width:100%;height:__HEIGHT__px;background:#1a1a2e}
 .sim-controls{
   position:absolute;top:10px;right:10px;z-index:1000;
   background:rgba(26,26,46,0.92);border-radius:10px;padding:12px 16px;
-  display:flex;gap:10px;align-items:center;
+  display:flex;gap:10px;align-items:center;flex-wrap:wrap;
   font-family:'Segoe UI',system-ui,sans-serif;color:#e0e0e0;font-size:13px;
   box-shadow:0 4px 20px rgba(0,0,0,0.4);backdrop-filter:blur(8px);
-  border:1px solid rgba(255,255,255,0.08);
+  border:1px solid rgba(255,255,255,0.08);max-width:420px;
 }
 .sim-controls button{
   background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.15);
@@ -298,9 +298,31 @@ html,body,#map{width:100%;height:__HEIGHT__px;background:#1a1a2e}
 .sim-controls button.active{background:rgba(59,130,246,0.5);border-color:rgba(59,130,246,0.6)}
 .sim-controls .speed-group{display:flex;gap:4px}
 
+/* Layer filter panel */
+.sim-filters{
+  position:absolute;top:10px;left:10px;z-index:1000;
+  background:rgba(26,26,46,0.92);border-radius:10px;padding:14px 16px;
+  font-family:'Segoe UI',system-ui,sans-serif;color:#e0e0e0;font-size:12px;
+  box-shadow:0 4px 20px rgba(0,0,0,0.4);backdrop-filter:blur(8px);
+  border:1px solid rgba(255,255,255,0.08);min-width:180px;
+}
+.sim-filters h4{margin:0 0 10px;font-size:13px;font-weight:600;color:#93c5fd;letter-spacing:0.03em}
+.filter-btn{
+  display:flex;align-items:center;gap:8px;width:100%;
+  background:none;border:1px solid rgba(255,255,255,0.1);
+  color:#e0e0e0;border-radius:6px;padding:6px 10px;cursor:pointer;
+  font-size:12px;margin:4px 0;transition:all 0.2s;text-align:left;
+}
+.filter-btn:hover{background:rgba(255,255,255,0.08)}
+.filter-btn.on{background:rgba(255,255,255,0.12);border-color:rgba(255,255,255,0.25)}
+.filter-btn.off{opacity:0.4;border-color:rgba(255,255,255,0.05)}
+.filter-btn .fdot{width:10px;height:10px;border-radius:50%;flex-shrink:0}
+.filter-btn .fline{width:20px;height:3px;border-radius:2px;flex-shrink:0}
+.filter-btn .count{margin-left:auto;opacity:0.5;font-size:11px}
+
 /* Legend */
 .sim-legend{
-  position:absolute;bottom:30px;left:10px;z-index:1000;
+  position:absolute;bottom:30px;right:10px;z-index:1000;
   background:rgba(26,26,46,0.92);border-radius:10px;padding:14px 18px;
   font-family:'Segoe UI',system-ui,sans-serif;color:#e0e0e0;font-size:12px;
   box-shadow:0 4px 20px rgba(0,0,0,0.4);backdrop-filter:blur(8px);
@@ -349,6 +371,20 @@ html,body,#map{width:100%;height:__HEIGHT__px;background:#1a1a2e}
 
 /* Ship icon */
 .ship-icon{transition:transform 0.1s linear}
+
+/* Progress bar per-ship */
+.ship-progress{
+  position:absolute;bottom:30px;left:50%;transform:translateX(-50%);z-index:1000;
+  background:rgba(26,26,46,0.92);border-radius:10px;padding:10px 18px;
+  font-family:'Segoe UI',system-ui,sans-serif;color:#e0e0e0;font-size:12px;
+  box-shadow:0 4px 20px rgba(0,0,0,0.4);backdrop-filter:blur(8px);
+  border:1px solid rgba(255,255,255,0.08);min-width:280px;max-width:420px;
+  display:flex;gap:12px;align-items:center;
+}
+.ship-progress .prog-label{white-space:nowrap;font-weight:500}
+.ship-progress .prog-bar{flex:1;height:6px;background:rgba(255,255,255,0.1);border-radius:3px;overflow:hidden}
+.ship-progress .prog-fill{height:100%;border-radius:3px;transition:width 0.3s}
+.ship-progress .prog-text{white-space:nowrap;min-width:80px;text-align:right}
 </style>
 </head>
 <body>
@@ -360,20 +396,22 @@ html,body,#map{width:100%;height:__HEIGHT__px;background:#1a1a2e}
     <button data-speed="2" onclick="setSpeed(2,this)">2&times;</button>
     <button data-speed="4" onclick="setSpeed(4,this)">4&times;</button>
   </div>
-  <span id="sim-clock" style="min-width:70px;text-align:center">Day 0</span>
+  <span id="sim-clock" style="min-width:90px;text-align:center">Day 0 / 0</span>
 </div>
+
+<div class="sim-filters" id="filters"></div>
+
 <div class="sim-legend" id="legend">
   <h4>Voyage Simulation</h4>
   <div class="row"><div class="dot" style="background:#22c55e"></div><span>Safe route</span></div>
-  <div class="row"><div class="dot" style="background:#f59e0b"></div><span>Reroute / risky</span></div>
-  <div class="row"><div class="dot" style="background:#ef4444"></div><span>Disrupted corridor</span></div>
+  <div class="row"><div class="dot" style="background:#f59e0b"></div><span>Risky route</span></div>
+  <div class="row"><div class="dot" style="background:#ef4444"></div><span>Reroute / overloaded</span></div>
   <div class="row"><div class="line-sample" style="background:#ef4444;opacity:0.5"></div><span>Blocked lane</span></div>
-  <div class="row"><div class="dot" style="background:#3b82f6"></div><span>Refinery (normal)</span></div>
-  <div class="row"><div class="dot" style="background:#f97316"></div><span>Refinery (stressed)</span></div>
-  <div class="row"><div class="dot" style="background:#dc2626"></div><span>Refinery (critical)</span></div>
+  <div class="row"><div class="dot" style="background:#3b82f6"></div><span>Corridor (open)</span></div>
+  <div class="row"><div class="dot" style="background:#dc2626"></div><span>Corridor (disrupted)</span></div>
 </div>
 <div class="baseline-caption" id="baseline-caption">
-  Baseline traffic — run a scenario to simulate a disruption
+  Baseline traffic &mdash; run a scenario to simulate a disruption
 </div>
 
 <script>
@@ -389,6 +427,17 @@ html,body,#map{width:100%;height:__HEIGHT__px;background:#1a1a2e}
   }).addTo(map);
 
   if(D.is_baseline) document.getElementById('baseline-caption').style.display='block';
+
+  // ── Layer groups ──
+  var layers = {
+    safe:       L.layerGroup().addTo(map),
+    risky:      L.layerGroup().addTo(map),
+    reroute:    L.layerGroup().addTo(map),
+    blocked:    L.layerGroup().addTo(map),
+    corridors:  L.layerGroup().addTo(map),
+    refineries: L.layerGroup().addTo(map)
+  };
+  var layerVisible = {safe:true, risky:true, reroute:true, blocked:true, corridors:true, refineries:true};
 
   // ── Ship SVG ──
   function shipSvg(color,size){
@@ -430,13 +479,26 @@ html,body,#map{width:100%;height:__HEIGHT__px;background:#1a1a2e}
     return{pos:path[path.length-1],angle:0};
   }
 
+  // ── Color helpers ──
+  var CAT_COLORS = {safe:'#22c55e', risky:'#f59e0b', reroute:'#ef4444', blocked:'#ef4444'};
+
+  function voyageColor(v){
+    if(v.status==='risky') return '#f59e0b';
+    if(v.type==='baseline') return 'rgba(34,197,94,0.5)';
+    return '#22c55e';
+  }
+  function voyageCategory(v){
+    if(v.status==='risky') return 'risky';
+    return 'safe';
+  }
+
   // ── Corridor pins ──
   var corridorColors={open:'#22c55e',disrupted:'#ef4444'};
   D.corridor_pins.forEach(function(c){
     var col=corridorColors[c.status]||'#6b7280';
     var circle=L.circleMarker([c.lat,c.lon],{
       radius:8,fillColor:col,color:col,weight:2,opacity:0.9,fillOpacity:0.7
-    }).addTo(map);
+    }).addTo(layers.corridors);
     circle.bindTooltip(
       '<div class="tt-title">'+c.name+'</div>'
       +'<div class="tt-row"><span class="tt-label">Status</span><span class="tt-value'
@@ -452,7 +514,7 @@ html,body,#map{width:100%;height:__HEIGHT__px;background:#1a1a2e}
       L.marker([c.lat,c.lon],{
         icon:L.divIcon({className:'',html:pulseHtml,iconSize:[16,16],iconAnchor:[8,8]}),
         interactive:false
-      }).addTo(map);
+      }).addTo(layers.corridors);
     }
   });
 
@@ -462,7 +524,7 @@ html,body,#map{width:100%;height:__HEIGHT__px;background:#1a1a2e}
     var col=refColors[r.status]||'#3b82f6';
     L.circleMarker([r.lat,r.lon],{
       radius:5,fillColor:col,color:'#1e293b',weight:1.5,fillOpacity:0.85
-    }).addTo(map).bindTooltip(
+    }).addTo(layers.refineries).bindTooltip(
       '<div class="tt-title">'+r.name+'</div>'
       +'<div class="tt-row"><span class="tt-label">Status</span><span class="tt-value'
       +(r.status==='critical'?' tt-risk':r.status==='stressed'?' tt-warn':'')+'">'
@@ -478,29 +540,31 @@ html,body,#map{width:100%;height:__HEIGHT__px;background:#1a1a2e}
   D.reroutes.forEach(function(rv){
     if(rv.original_path && rv.original_path.length>1){
       L.polyline(rv.original_path,{color:'#ef4444',weight:2.5,opacity:0.35,
-        dashArray:'8 6'}).addTo(map);
+        dashArray:'8 6'}).addTo(layers.blocked);
     }
     if(rv.blocked_at){
       L.circleMarker(rv.blocked_at,{radius:10,fillColor:'#ef4444',
-        color:'#fca5a5',weight:2,fillOpacity:0.6}).addTo(map)
-        .bindTooltip('<div class="tt-title">⊘ BLOCKED</div><div>'+rv.from_corridor+'</div>');
+        color:'#fca5a5',weight:2,fillOpacity:0.6}).addTo(layers.blocked)
+        .bindTooltip('<div class="tt-title">⊘ BLOCKED</div><div>'+rv.from_corridor.replace(/_/g,' ')+'</div>');
     }
     if(rv.path && rv.path.length>1){
-      L.polyline(rv.path,{color:'#f59e0b',weight:2,opacity:0.4,
-        dashArray:'6 4'}).addTo(map);
+      var rcol=rv.overloaded?'#ef4444':'#f59e0b';
+      L.polyline(rv.path,{color:rcol,weight:2.5,opacity:0.5,
+        dashArray:'6 4'}).addTo(layers.reroute);
     }
   });
 
-  // ── Draw voyage paths ──
+  // ── Draw voyage paths (color-coded by status) ──
   D.voyages.forEach(function(v){
     if(!v.path||v.path.length<2) return;
-    var col=v.status==='risky'?'#f59e0b':v.type==='baseline'?'rgba(34,197,94,0.3)':'#22c55e';
-    L.polyline(v.path,{color:col,weight:1.8,opacity:v.type==='baseline'?0.25:0.4}).addTo(map);
+    var col=voyageColor(v);
+    var cat=voyageCategory(v);
+    var opts={color:col,weight:2,opacity:v.type==='baseline'?0.25:0.5};
+    if(v.status==='risky') opts.dashArray='6 4';
+    L.polyline(v.path,opts).addTo(layers[cat]);
   });
 
-  // ── Animated ships ──
-  var ships=[];
-
+  // ── Tooltip builders ──
   function makeTooltip(v){
     var html='<div class="tt-title">'+v.supplier+'</div>';
     html+='<div class="tt-row"><span class="tt-label">Grade</span><span class="tt-value">'+v.grade+'</span></div>';
@@ -527,31 +591,86 @@ html,body,#map{width:100%;height:__HEIGHT__px;background:#1a1a2e}
     return html;
   }
 
+  // ── Animated ships ──
+  var ships=[];
+  var counts={safe:0, risky:0, reroute:0, blocked:0};
+
   // Create ship markers for voyages
   D.voyages.forEach(function(v){
     if(!v.path||v.path.length<2) return;
-    var col=v.status==='risky'?'#f59e0b':v.type==='baseline'?'#22c55e':'#22c55e';
+    var col=voyageColor(v);
+    var cat=voyageCategory(v);
+    counts[cat]++;
     var size=v.type==='baseline'?16:22;
     var marker=L.marker(v.path[0],{
       icon:L.divIcon({className:'ship-icon',html:shipSvg(col,size),
         iconSize:[size,size],iconAnchor:[size/2,size/2]})
-    }).addTo(map);
+    }).addTo(layers[cat]);
     marker.bindTooltip(makeTooltip(v),{sticky:true});
     ships.push({marker:marker,path:v.path,dists:cumDists(v.path),
-      transit:v.transit_days||15,offset:Math.random()*0.15});
+      transit:v.transit_days||15,offset:Math.random()*0.1,cat:cat,
+      label:v.supplier});
   });
 
   // Create ship markers for reroutes
   D.reroutes.forEach(function(rv){
     if(!rv.path||rv.path.length<2) return;
+    counts.reroute++;
     var col=rv.overloaded?'#ef4444':'#f59e0b';
     var marker=L.marker(rv.path[0],{
       icon:L.divIcon({className:'ship-icon',html:shipSvg(col,20),
         iconSize:[20,20],iconAnchor:[10,10]})
-    }).addTo(map);
+    }).addTo(layers.reroute);
     marker.bindTooltip(makeRerouteTooltip(rv),{sticky:true});
     ships.push({marker:marker,path:rv.path,dists:cumDists(rv.path),
-      transit:rv.added_transit_days||20,offset:Math.random()*0.15});
+      transit:rv.added_transit_days||20,offset:Math.random()*0.1,cat:'reroute',
+      label:'Reroute: '+rv.from_corridor.replace(/_/g,' ')});
+  });
+
+  // Count blocked lanes and corridor/refinery items for filter badges
+  counts.blocked = D.reroutes.filter(function(rv){return rv.original_path && rv.original_path.length>1}).length;
+
+  // ── Filter panel ──
+  var filterDefs=[
+    {key:'safe',       color:'#22c55e', label:'Safe routes',        icon:'dot'},
+    {key:'risky',      color:'#f59e0b', label:'Risky routes',       icon:'dot'},
+    {key:'reroute',    color:'#ef4444', label:'Reroutes',           icon:'dot'},
+    {key:'blocked',    color:'#ef4444', label:'Blocked lanes',      icon:'line'},
+    {key:'corridors',  color:'#3b82f6', label:'Corridors',          icon:'dot'},
+    {key:'refineries', color:'#3b82f6', label:'Refineries',         icon:'dot'}
+  ];
+  var filterEl=document.getElementById('filters');
+  var filterCountMap={
+    safe: counts.safe,
+    risky: counts.risky,
+    reroute: counts.reroute,
+    blocked: counts.blocked,
+    corridors: D.corridor_pins.length,
+    refineries: D.refinery_pins.length
+  };
+
+  filterEl.innerHTML='<h4>Layers</h4>';
+  filterDefs.forEach(function(fd){
+    var btn=document.createElement('button');
+    btn.className='filter-btn on';
+    btn.dataset.key=fd.key;
+    var iconHtml = fd.icon==='line'
+      ? '<span class="fline" style="background:'+fd.color+';opacity:0.5"></span>'
+      : '<span class="fdot" style="background:'+fd.color+'"></span>';
+    var cnt=filterCountMap[fd.key]||0;
+    btn.innerHTML=iconHtml+'<span>'+fd.label+'</span><span class="count">'+cnt+'</span>';
+    btn.onclick=function(){
+      var k=this.dataset.key;
+      layerVisible[k]=!layerVisible[k];
+      if(layerVisible[k]){
+        map.addLayer(layers[k]);
+        this.className='filter-btn on';
+      } else {
+        map.removeLayer(layers[k]);
+        this.className='filter-btn off';
+      }
+    };
+    filterEl.appendChild(btn);
   });
 
   // ── Animation loop ──
@@ -566,8 +685,10 @@ html,body,#map{width:100%;height:__HEIGHT__px;background:#1a1a2e}
     var dt=(ts-lastTs)/1000;
     lastTs=ts;
     simTime+=dt*speed;
+
     var day=simTime;
-    clockEl.textContent='Day '+Math.floor(day);
+    var cycleDay = day % maxTransit;
+    clockEl.textContent='Day '+Math.floor(cycleDay)+' / '+maxTransit;
 
     ships.forEach(function(s){
       var frac=((day+s.offset*s.transit)%s.transit)/s.transit;

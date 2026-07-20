@@ -392,10 +392,14 @@ def page_observability() -> None:
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
 def _get_twin_state() -> dict:
-    """Get twin_state from last run or live twin."""
-    summary = st.session_state.get("last_summary")
-    if summary:
-        return summary.get("twin_summary") or summary.get("twin_state") or {}
+    """Get twin_state for the simulation map.
+
+    Priority: stored twin_snapshot (full corridor_risks/impacts/routes from
+    the last board run) > live twin endpoint > empty dict.
+    """
+    snap = st.session_state.get("last_twin_snapshot")
+    if snap:
+        return snap
     twin = fetch_twin()
     return (twin or {}).get("twin_state", {}) or {}
 

@@ -55,13 +55,14 @@ def fetch_twin() -> dict | None:
 
 def init_state() -> None:
     defaults: dict = {
-        "session_id":      None,
-        "messages":        [],
-        "last_summary":    None,
-        "last_components": [],
-        "last_follow_ups": [],
-        "pending_message": None,
-        "learn":           True,
+        "session_id":       None,
+        "messages":         [],
+        "last_summary":     None,
+        "last_components":  [],
+        "last_follow_ups":  [],
+        "last_twin_snapshot": None,
+        "pending_message":  None,
+        "learn":            True,
     }
     for k, v in defaults.items():
         if k not in st.session_state:
@@ -74,6 +75,7 @@ def clear_conversation() -> None:
     st.session_state["last_summary"] = None
     st.session_state["last_components"] = []
     st.session_state["last_follow_ups"] = []
+    st.session_state["last_twin_snapshot"] = None
 
 
 # ── Chat logic ────────────────────────────────────────────────────────────────
@@ -97,6 +99,8 @@ def send_message(message: str) -> None:
         })
         if resp.get("run_summary") is not None:
             st.session_state["last_summary"] = resp["run_summary"]
+        if resp.get("twin_snapshot") is not None:
+            st.session_state["last_twin_snapshot"] = resp["twin_snapshot"]
         st.session_state["last_components"] = resp.get("components") or []
         st.session_state["last_follow_ups"] = resp.get("follow_ups") or []
     else:
