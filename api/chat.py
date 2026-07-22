@@ -447,12 +447,20 @@ def chat(req: ChatRequest) -> dict:
         store.record_run(sid, summary, digest, components, follow_ups)
         reply = final.get("final_recommendation") or _template_answer(summary)
         run_summary = summary
+        plan = final.get("response_plan") or {}
+        sit = plan.get("situation") or {}
+        twin_snapshot = {
+            "corridor_risks": sit.get("top_corridor_risks") or [],
+            "impacts":        twin_state.get("impacts") or [],
+            "routes":         twin_state.get("routes") or [],
+        }
     else:
         reply = (_answer_from_digest(req.message, ctx["digest"], ctx["turns"])
                  or _template_answer(ctx["summary"] or {}))
         components = ctx["components"]
         follow_ups = ctx["follow_ups"]
         run_summary = None
+        twin_snapshot = None
 
     store.append_turn(sid, "assistant", reply)
     return {
@@ -460,6 +468,7 @@ def chat(req: ChatRequest) -> dict:
         "mode": intent,
         "reply": reply,
         "run_summary": run_summary,
+        "twin_snapshot": twin_snapshot,
         "components": components,
         "follow_ups": follow_ups,
     }
