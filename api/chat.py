@@ -447,8 +447,10 @@ def chat(req: ChatRequest) -> dict:
         store.record_run(sid, summary, digest, components, follow_ups)
         reply = final.get("final_recommendation") or _template_answer(summary)
         run_summary = summary
+        plan = final.get("response_plan") or {}
+        sit = plan.get("situation") or {}
         twin_snapshot = {
-            "corridor_risks": twin_state.get("corridor_risks") or [],
+            "corridor_risks": sit.get("top_corridor_risks") or [],
             "impacts":        twin_state.get("impacts") or [],
             "routes":         twin_state.get("routes") or [],
         }

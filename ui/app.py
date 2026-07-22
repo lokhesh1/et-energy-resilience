@@ -297,7 +297,7 @@ def _render_mix_table(comp: dict) -> None:
 
     spr = comp.get("spr_bridge")
     if spr:
-        draw = spr.get("draw_mbd", 0)
+        draw = spr.get("drawdown_mbd", 0)
         days = spr.get("days_of_cover", 0)
         st.warning(
             f"SPR bridge: {draw} mbd for {days} days "

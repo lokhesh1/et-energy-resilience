@@ -407,6 +407,7 @@ html,body,#map{width:100%;height:__HEIGHT__px;background:#1a1a2e}
   <div class="row"><div class="dot" style="background:#f59e0b"></div><span>Risky route</span></div>
   <div class="row"><div class="dot" style="background:#ef4444"></div><span>Reroute / overloaded</span></div>
   <div class="row"><div class="line-sample" style="background:#ef4444;opacity:0.5"></div><span>Blocked lane</span></div>
+  <div class="row"><div class="line-sample" style="background:#f59e0b;opacity:0.5"></div><span>Congested lane</span></div>
   <div class="row"><div class="dot" style="background:#3b82f6"></div><span>Corridor (open)</span></div>
   <div class="row"><div class="dot" style="background:#dc2626"></div><span>Corridor (disrupted)</span></div>
 </div>
@@ -434,10 +435,11 @@ html,body,#map{width:100%;height:__HEIGHT__px;background:#1a1a2e}
     risky:      L.layerGroup().addTo(map),
     reroute:    L.layerGroup().addTo(map),
     blocked:    L.layerGroup().addTo(map),
+    congested:  L.layerGroup().addTo(map),
     corridors:  L.layerGroup().addTo(map),
     refineries: L.layerGroup().addTo(map)
   };
-  var layerVisible = {safe:true, risky:true, reroute:true, blocked:true, corridors:true, refineries:true};
+  var layerVisible = {safe:true, risky:true, reroute:true, blocked:true, congested:true, corridors:true, refineries:true};
 
   // ── Ship SVG ──
   function shipSvg(color,size){
@@ -493,7 +495,7 @@ html,body,#map{width:100%;height:__HEIGHT__px;background:#1a1a2e}
   }
 
   // ── Corridor pins ──
-  var corridorColors={open:'#22c55e',disrupted:'#ef4444'};
+  var corridorColors={open:'#3b82f6',disrupted:'#dc2626'};
   D.corridor_pins.forEach(function(c){
     var col=corridorColors[c.status]||'#6b7280';
     var circle=L.circleMarker([c.lat,c.lon],{
@@ -536,16 +538,30 @@ html,body,#map{width:100%;height:__HEIGHT__px;background:#1a1a2e}
     );
   });
 
-  // ── Draw reroute blocked lanes ──
+  // ── Corridor risk lookup (for blocked vs congested distinction) ──
+  var corridorRisk={};
+  D.corridor_pins.forEach(function(c){corridorRisk[c.id]=c.risk_score||0;});
+
+  // ── Draw reroute blocked/congested lanes ──
   D.reroutes.forEach(function(rv){
+    var fromRisk=corridorRisk[rv.from_corridor]||0;
+    var isBlocked=fromRisk>=0.4;
     if(rv.original_path && rv.original_path.length>1){
-      L.polyline(rv.original_path,{color:'#ef4444',weight:2.5,opacity:0.35,
-        dashArray:'8 6'}).addTo(layers.blocked);
+      var laneCol=isBlocked?'#ef4444':'#f59e0b';
+      var laneLayer=isBlocked?layers.blocked:layers.congested;
+      L.polyline(rv.original_path,{color:laneCol,weight:2.5,opacity:0.35,
+        dashArray:'8 6'}).addTo(laneLayer);
     }
     if(rv.blocked_at){
-      L.circleMarker(rv.blocked_at,{radius:10,fillColor:'#ef4444',
-        color:'#fca5a5',weight:2,fillOpacity:0.6}).addTo(layers.blocked)
-        .bindTooltip('<div class="tt-title">⊘ BLOCKED</div><div>'+rv.from_corridor.replace(/_/g,' ')+'</div>');
+      if(isBlocked){
+        L.circleMarker(rv.blocked_at,{radius:10,fillColor:'#ef4444',
+          color:'#fca5a5',weight:2,fillOpacity:0.6}).addTo(layers.blocked)
+          .bindTooltip('<div class="tt-title">⊘ BLOCKED</div><div>'+rv.from_corridor.replace(/_/g,' ')+'</div>');
+      } else {
+        L.circleMarker(rv.blocked_at,{radius:8,fillColor:'#f59e0b',
+          color:'#fbbf24',weight:2,fillOpacity:0.5}).addTo(layers.congested)
+          .bindTooltip('<div class="tt-title">⚠ CONGESTED</div><div>'+rv.from_corridor.replace(/_/g,' ')+'</div>');
+      }
     }
     if(rv.path && rv.path.length>1){
       var rcol=rv.overloaded?'#ef4444':'#f59e0b';
@@ -593,7 +609,7 @@ html,body,#map{width:100%;height:__HEIGHT__px;background:#1a1a2e}
 
   // ── Animated ships ──
   var ships=[];
-  var counts={safe:0, risky:0, reroute:0, blocked:0};
+  var counts={safe:0, risky:0, reroute:0, blocked:0, congested:0};
 
   // Create ship markers for voyages
   D.voyages.forEach(function(v){
@@ -627,8 +643,13 @@ html,body,#map{width:100%;height:__HEIGHT__px;background:#1a1a2e}
       label:'Reroute: '+rv.from_corridor.replace(/_/g,' ')});
   });
 
-  // Count blocked lanes and corridor/refinery items for filter badges
-  counts.blocked = D.reroutes.filter(function(rv){return rv.original_path && rv.original_path.length>1}).length;
+  // Count blocked vs congested lanes for filter badges
+  D.reroutes.forEach(function(rv){
+    if(!rv.original_path || rv.original_path.length<2) return;
+    var fromRisk=corridorRisk[rv.from_corridor]||0;
+    if(fromRisk>=0.4) counts.blocked++;
+    else counts.congested++;
+  });
 
   // ── Filter panel ──
   var filterDefs=[
@@ -636,6 +657,7 @@ html,body,#map{width:100%;height:__HEIGHT__px;background:#1a1a2e}
     {key:'risky',      color:'#f59e0b', label:'Risky routes',       icon:'dot'},
     {key:'reroute',    color:'#ef4444', label:'Reroutes',           icon:'dot'},
     {key:'blocked',    color:'#ef4444', label:'Blocked lanes',      icon:'line'},
+    {key:'congested',  color:'#f59e0b', label:'Congested lanes',    icon:'line'},
     {key:'corridors',  color:'#3b82f6', label:'Corridors',          icon:'dot'},
     {key:'refineries', color:'#3b82f6', label:'Refineries',         icon:'dot'}
   ];
@@ -645,6 +667,7 @@ html,body,#map{width:100%;height:__HEIGHT__px;background:#1a1a2e}
     risky: counts.risky,
     reroute: counts.reroute,
     blocked: counts.blocked,
+    congested: counts.congested,
     corridors: D.corridor_pins.length,
     refineries: D.refinery_pins.length
   };
