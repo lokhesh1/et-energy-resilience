@@ -1,8 +1,14 @@
 """Streamlit dashboard for the Energy Intelligence Board.
 
-Two tabs — Board (map + metrics + mix + chat) and Observability (trust &
-novelty).  Talks to the FastAPI backend over HTTP; never imports the graph
-directly (the twin loop lives in uvicorn's lifespan).
+Multi-page layout (st.navigation):
+  1. Board        — map + metrics + warnings + news + chat
+  2. Simulation   — animated voyage simulation map
+  3. Procurement  — recommended mix + SPR + economic impact
+  4. Actions      — priority actions + escalation + recommendation
+  5. Observability — trust & novelty (delegates to ui/observability.py)
+
+Session state is shared across pages automatically.
+Talks to the FastAPI backend over HTTP; never imports the graph directly.
 
 Run:  streamlit run ui/app.py
 """
@@ -15,171 +21,43 @@ _PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
-import requests
 import streamlit as st
 from streamlit_folium import st_folium
 
+from ui.common import (
+    EIB_API_URL, TONE_CSS,
+    api, fetch_twin, init_state, send_message, clear_conversation,
+    render_metric_tiles, render_sidebar, empty_state_message,
+)
 from ui.map_view import build_folium_map
 from ui.observability import render as render_observability
-
-EIB_API_URL = os.environ.get("EIB_API_URL", "http://localhost:8000")
-
-_PRESETS = [
-    ("Hormuz Blockade",
-     "Iran closes the Strait of Hormuz following a military escalation."),
-    ("Suez Diversion",
-     "Houthi attacks force tankers to reroute via Cape of Good Hope."),
-    ("Sanctions Shock",
-     "New US sanctions on Iranian crude exporters effective in 30 days."),
-]
-
-_TONE_CSS = {
-    "critical": "background-color:#fef2f2;color:#dc2626;border-left:3px solid #ef4444;",
-    "elevated": "background-color:#fffbeb;color:#b45309;border-left:3px solid #f59e0b;",
-    "ok":       "background-color:#f0fdf4;color:#15803d;border-left:3px solid #22c55e;",
-}
+from ui.sim_map import build_sim_map_html, build_voyages
 
 
-# ── API helpers ────────────────────────────────────────────────────────────────
+# ── Page: Board ──────────────────────────────────────────────────────────────
 
-def _api(method: str, path: str, **kw) -> dict | None:
-    timeout = kw.pop("timeout", 120)
-    try:
-        r = getattr(requests, method)(
-            f"{EIB_API_URL}{path}", timeout=timeout, **kw,
-        )
-        r.raise_for_status()
-        return r.json()
-    except requests.ConnectionError:
-        return None
-    except Exception:
-        return None
+def page_board() -> None:
+    left, right = st.columns([3, 2])
+    with left:
+        _render_map()
+        _render_metrics()
+        _render_run_warnings()
+        _render_news_sources()
+    with right:
+        _render_chat()
 
-
-@st.cache_data(ttl=15)
-def _fetch_twin() -> dict | None:
-    return _api("get", "/twin", timeout=8)
-
-
-# ── Session state ──────────────────────────────────────────────────────────────
-
-def _init_state() -> None:
-    defaults: dict = {
-        "session_id":      None,
-        "messages":        [],
-        "last_summary":    None,
-        "last_components": [],
-        "last_follow_ups": [],
-        "pending_message": None,
-        "learn":           True,
-    }
-    for k, v in defaults.items():
-        if k not in st.session_state:
-            st.session_state[k] = v
-
-
-def _clear_conversation() -> None:
-    st.session_state["session_id"] = None
-    st.session_state["messages"] = []
-    st.session_state["last_summary"] = None
-    st.session_state["last_components"] = []
-    st.session_state["last_follow_ups"] = []
-
-
-# ── Chat logic ─────────────────────────────────────────────────────────────────
-
-def _send_message(message: str) -> None:
-    """POST /chat and update session state with the response."""
-    st.session_state["messages"].append({"role": "user", "content": message})
-
-    resp = _api("post", "/chat", timeout=300, json={
-        "session_id": st.session_state["session_id"],
-        "message":    message,
-        "learn":      st.session_state["learn"],
-    })
-
-    if resp:
-        st.session_state["session_id"] = resp.get("session_id")
-        st.session_state["messages"].append({
-            "role":    "assistant",
-            "content": resp.get("reply", ""),
-            "mode":    resp.get("mode", "run_board"),
-        })
-        if resp.get("run_summary") is not None:
-            st.session_state["last_summary"] = resp["run_summary"]
-        st.session_state["last_components"] = resp.get("components") or []
-        st.session_state["last_follow_ups"] = resp.get("follow_ups") or []
-    else:
-        st.session_state["messages"].append({
-            "role":    "assistant",
-            "content": ("Could not reach the board.  "
-                        f"Is the API running at `{EIB_API_URL}`?"),
-            "mode":    "error",
-        })
-
-
-# ── Sidebar ────────────────────────────────────────────────────────────────────
-
-def _render_sidebar() -> None:
-    with st.sidebar:
-        st.markdown("### Energy Intelligence Board")
-        st.caption("Multi-agent crisis response")
-
-        st.markdown("**Scenarios**")
-        for name, query in _PRESETS:
-            if st.button(name, use_container_width=True, key=f"pre_{name}"):
-                st.session_state["pending_message"] = query
-                st.rerun()
-
-        st.divider()
-        st.session_state["learn"] = st.toggle(
-            "Learn from runs", value=st.session_state.get("learn", True),
-        )
-
-        c1, c2 = st.columns(2)
-        with c1:
-            if st.button("Refresh twin", use_container_width=True):
-                with st.spinner("Refreshing..."):
-                    _api("post", "/twin/refresh", json={})
-                _fetch_twin.clear()
-                st.rerun()
-        with c2:
-            if st.button("New chat", use_container_width=True):
-                _clear_conversation()
-                st.rerun()
-
-        st.divider()
-        twin = _fetch_twin()
-        if twin:
-            status = twin.get("status", "cold")
-            dot = {"ok": "🟢", "stale": "🟡"}.get(status, "⚪")
-            st.markdown(f"**Twin:** {dot} {status}")
-            ts = twin.get("last_refreshed_at")
-            if ts:
-                st.caption(f"Last refresh: {ts[:19]}")
-        else:
-            st.caption(f"API offline — {EIB_API_URL}")
-
-
-# ── Board tab — left column ───────────────────────────────────────────────────
 
 def _render_map() -> None:
-    # The Board tab must be internally consistent: metrics, mix and actions all
-    # describe the LAST RUN, so the map must too — its geojson arrives in the
-    # run's `map` component. The live-twin snapshot (GET /twin — an independent
-    # GRI read on its own clock) is only the pre-first-run fallback: the two can
-    # honestly disagree around the DSM modelling threshold, and an unlabelled
-    # mismatch (all-green map beside "11 stressed refineries") reads as a bug.
     components = st.session_state.get("last_components", [])
     comp = next((c for c in components if c.get("type") == "map"), None)
     if comp and (comp.get("geojson") or {}).get("features"):
         geojson = comp["geojson"]
         source = "this run"
     else:
-        twin = _fetch_twin()
+        twin = fetch_twin()
         twin_state = (twin or {}).get("twin_state", {}) or {}
         geojson = twin_state.get("geojson", {}) or {}
-        source = "live twin (background refresh — independent of the chat run)"
+        source = "live twin (background refresh)"
     m = build_folium_map(geojson)
     st_folium(m, use_container_width=True, height=420, returned_objects=[])
     st.caption(f"Map source: {source}")
@@ -187,42 +65,14 @@ def _render_map() -> None:
 
 def _render_metrics() -> None:
     components = st.session_state.get("last_components", [])
-    comp = next((c for c in components if c.get("type") == "metrics"), None)
+    comp = next((c for c in components if c.get("type") == "metrics"
+                 and c.get("title") != "Economic impact"), None)
     if not comp:
         return
-
-    items = comp.get("items", [])
-    if not items:
-        return
-
-    cols = st.columns(len(items))
-    for col, item in zip(cols, items):
-        tone = item.get("tone", "ok")
-        css = _TONE_CSS.get(tone, _TONE_CSS["ok"])
-        value = item["value"]
-        unit = item.get("unit") or ""
-        display = f"{value} {unit}".strip() if unit else str(value)
-        label = item["label"]
-        with col:
-            # Labels may wrap to two lines ("Stressed refineries") — reserve two
-            # lines in EVERY tile so values sit on one baseline and tile bottoms
-            # stay even, instead of the row going ragged.
-            st.markdown(
-                f'<div style="padding:10px 12px;border-radius:6px;min-height:80px;{css}">'
-                f'<div style="font-size:11px;font-weight:600;text-transform:uppercase;'
-                f'letter-spacing:.04em;opacity:.7;line-height:14px;min-height:28px;">'
-                f'{label}</div>'
-                f'<div style="font-size:22px;font-weight:700;margin-top:2px;">'
-                f'{display}</div></div>',
-                unsafe_allow_html=True,
-            )
+    render_metric_tiles(comp.get("items", []))
 
 
 def _render_run_warnings() -> None:
-    """Loud surfaces for silent-failure signals: a failed scoring step or the
-    scores-contradict-evidence tripwire must be visible on the Board tab, not
-    buried in the audit chain — and the disrupted corridors are named with their
-    per-corridor share of the gap so the cause is readable at a glance."""
     summary = st.session_state.get("last_summary")
     if not summary:
         return
@@ -237,7 +87,7 @@ def _render_run_warnings() -> None:
         cids = ", ".join(assessment["evidence_ignored_corridors"])
         st.warning(
             f"Scores contradict fresh high-trust evidence for: {cids} — "
-            "verify in Observability → audit trail."
+            "verify in Observability tab."
         )
     sit = ((summary.get("response_plan") or {}).get("situation") or {})
     drivers = sit.get("disruption_drivers") or []
@@ -246,9 +96,6 @@ def _render_run_warnings() -> None:
     for g in causes:
         for d in g.get("driven", []):
             origin_of.setdefault(d.get("corridor"), g.get("origin"))
-    # Zero-contribution corridors (disrupted but no refinery depends on them,
-    # e.g. turkish_straits) add noise to an "by impact" line — drop them. If the
-    # twin provided no decomposition at all, keep every name rather than none.
     shown = [d for d in drivers if d.get("gap_contribution_mbd")] or drivers
     if shown:
         parts = [
@@ -265,8 +112,6 @@ def _render_run_warnings() -> None:
 
 
 def _render_news_sources() -> None:
-    """The 'News evidence' tile made inspectable: clickable sources + the
-    per-corridor evidence coverage (a 0 = unverified this run, not calm)."""
     summary = st.session_state.get("last_summary")
     if not summary:
         return
@@ -294,8 +139,6 @@ def _render_news_sources() -> None:
             meta = f" — {a.get('source', 'unknown')}"
             trust = a.get("trust_score")
             if a.get("trust_rated") is False:
-                # No rating ≠ verified-bad: don't print a number that reads
-                # like a real (dis)trust judgement.
                 meta += " · unrated source"
             elif trust is not None:
                 meta += f" · trust {float(trust):.2f}"
@@ -305,153 +148,13 @@ def _render_news_sources() -> None:
             st.markdown(f"- {line}{meta}")
 
 
-def _render_mix_table() -> None:
-    components = st.session_state.get("last_components", [])
-    comp = next((c for c in components if c.get("type") == "mix_table"), None)
-    if not comp:
-        return
-
-    st.markdown("**Recommended procurement mix**")
-    rows = comp.get("rows", [])
-    if rows:
-        import pandas as pd
-
-        display_keys = [
-            ("supplier",         "Supplier"),
-            ("grade",            "Grade"),
-            ("volume_mbd",       "Volume (mbd)"),
-            ("effective_volume_mbd", "Expected delivery (mbd)"),
-            ("price_per_bbl",    "Price ($/bbl)"),
-            ("transit_days",     "Transit (days)"),
-            ("delivery_risk_fraction", "Corridor risk"),
-            ("sanctions_status", "Sanctions"),
-        ]
-        df_rows: list[dict] = []
-        for r in rows:
-            row: dict = {}
-            for key, label in display_keys:
-                val = r.get(key, "")
-                if key == "price_per_bbl" and isinstance(val, (int, float)):
-                    val = f"${val:.2f}"
-                elif key in ("volume_mbd", "effective_volume_mbd") and isinstance(val, (int, float)):
-                    val = f"{val:.3f}"
-                elif key == "delivery_risk_fraction":
-                    val = f"{round(float(val) * 100)}%" if isinstance(val, (int, float)) and val else "—"
-                row[label] = val
-            df_rows.append(row)
-        st.dataframe(
-            pd.DataFrame(df_rows), use_container_width=True, hide_index=True,
-        )
-
-    spr = comp.get("spr_bridge")
-    if spr:
-        draw = spr.get("draw_mbd", 0)
-        days = spr.get("days_of_cover", 0)
-        st.warning(
-            f"SPR bridge: {draw} mbd for {days} days "
-            f"(partial drawdown at max sustainable rate)",
-        )
-
-
-def _render_economic_impact() -> None:
-    components = st.session_state.get("last_components", [])
-    econ_comp = next((c for c in components
-                      if c.get("type") == "metrics" and c.get("title") == "Economic impact"), None)
-    if not econ_comp:
-        return
-    items = econ_comp.get("items", [])
-    if not items:
-        return
-    st.markdown("**Economic impact**")
-    cols = st.columns(min(len(items), 4))
-    for i, item in enumerate(items):
-        tone = item.get("tone", "ok")
-        css = _TONE_CSS.get(tone, _TONE_CSS["ok"])
-        value = item["value"]
-        unit = item.get("unit") or ""
-        display = f"{value} {unit}".strip() if unit else str(value)
-        label = item["label"]
-        with cols[i % len(cols)]:
-            st.markdown(
-                f'<div style="padding:10px 12px;border-radius:6px;min-height:80px;{css}">'
-                f'<div style="font-size:11px;font-weight:600;text-transform:uppercase;'
-                f'letter-spacing:.04em;opacity:.7;line-height:14px;min-height:28px;">'
-                f'{label}</div>'
-                f'<div style="font-size:22px;font-weight:700;margin-top:2px;">'
-                f'{display}</div></div>',
-                unsafe_allow_html=True,
-            )
-
-
-def _render_recovery_table() -> None:
-    components = st.session_state.get("last_components", [])
-    comp = next((c for c in components if c.get("type") == "recovery_table"), None)
-    if not comp:
-        return
-    st.markdown("**Recovery levers (ranked by net benefit)**")
-    rows = comp.get("rows", [])
-    if rows:
-        import pandas as pd
-        display_keys = [
-            ("lever",           "Lever"),
-            ("description",     "Description"),
-            ("avoided_loss_usd", "Avoided loss ($)"),
-            ("lever_cost_usd",  "Cost ($)"),
-            ("net_benefit_usd", "Net benefit ($)"),
-            ("time_to_effect_days", "Time (days)"),
-        ]
-        df_rows: list[dict] = []
-        for r in rows:
-            row: dict = {}
-            for key, label in display_keys:
-                val = r.get(key, "")
-                if key in ("avoided_loss_usd", "lever_cost_usd", "net_benefit_usd"):
-                    if isinstance(val, (int, float)):
-                        val = f"${val:,.0f}"
-                row[label] = val
-            df_rows.append(row)
-        st.dataframe(
-            pd.DataFrame(df_rows), use_container_width=True, hide_index=True,
-        )
-
-    tradeoff = next((c for c in components if c.get("type") == "policy_tradeoff"), None)
-    if tradeoff:
-        data = tradeoff.get("data", {})
-        if data:
-            fiscal = data.get("subsidy_fiscal_cost_usd", 0)
-            cpi = data.get("passthrough_cpi_bps", 0)
-            st.info(
-                f"**Policy tradeoff — subsidy vs pass-through:** "
-                f"Subsidize fuel = ${fiscal / 1e9:.2f} bn fiscal cost; "
-                f"pass through = +{cpi} bps CPI impact."
-            )
-
-
-def _render_priority_actions() -> None:
-    summary = st.session_state.get("last_summary")
-    if not summary:
-        return
-    plan = summary.get("response_plan", {}) or {}
-    actions = plan.get("priority_actions", [])
-    if not actions:
-        return
-
-    st.markdown("**Priority actions**")
-    for i, action in enumerate(actions, 1):
-        st.markdown(f"{i}. {action}")
-
-
-# ── Board tab — right column (chat) ──────────────────────────────────────────
-
 def _render_chat() -> None:
     st.markdown("**Ask the Board**")
 
     chat_box = st.container(height=480)
     with chat_box:
         if not st.session_state["messages"]:
-            st.caption(
-                "Type a crisis scenario or click a preset to start.",
-            )
+            st.caption("Type a crisis scenario or click a preset to start.")
         for msg in st.session_state["messages"]:
             with st.chat_message(msg["role"]):
                 mode = msg.get("mode")
@@ -477,7 +180,231 @@ def _render_chat() -> None:
         st.rerun()
 
 
-# ── Main ───────────────────────────────────────────────────────────────────────
+# ── Page: Voyage Simulation ──────────────────────────────────────────────────
+
+def page_simulation() -> None:
+    st.subheader("Voyage Simulation")
+
+    summary = st.session_state.get("last_summary")
+    components = st.session_state.get("last_components", [])
+    mix_comp = next((c for c in components if c.get("type") == "mix_table"), None)
+    mix_rows = (mix_comp.get("rows") or []) if mix_comp else []
+
+    twin_state = _get_twin_state()
+
+    html = build_sim_map_html(mix_rows=mix_rows, twin_state=twin_state,
+                              summary=summary, height=600)
+    st.components.v1.html(html, height=620, scrolling=False)
+
+    if mix_rows:
+        st.markdown("**Active voyages**")
+        voyage_data = build_voyages(mix_rows, twin_state, summary)
+        rows_display = []
+        for v in voyage_data.get("voyages", []):
+            if v.get("type") == "baseline":
+                continue
+            rows_display.append({
+                "Supplier": v.get("supplier", ""),
+                "Grade": v.get("grade", ""),
+                "Volume (mbd)": v.get("volume_mbd", 0),
+                "Barrels/day": f"{v.get('barrels_per_day', 0):,}",
+                "Corridor": (v.get("delivery_corridor") or "").replace("_", " "),
+                "Transit (days)": v.get("transit_days", 0),
+                "Status": v.get("status", "clear").upper(),
+            })
+        if rows_display:
+            import pandas as pd
+            st.dataframe(pd.DataFrame(rows_display),
+                         use_container_width=True, hide_index=True)
+
+        for rv in voyage_data.get("reroutes", []):
+            from_c = rv.get("from_corridor", "").replace("_", " ")
+            to_c = rv.get("to_corridor", "").replace("_", " ")
+            vol = rv.get("volume_mbd", 0)
+            added = rv.get("added_transit_days", "?")
+            tag = " **OVERLOADED**" if rv.get("overloaded") else ""
+            st.warning(f"Reroute: {from_c} → {to_c} — {vol} mbd, +{added} days{tag}")
+    elif not summary:
+        empty_state_message()
+    else:
+        st.caption("No committed cargoes this run — showing baseline traffic.")
+
+
+# ── Page: Procurement Mix ────────────────────────────────────────────────────
+
+def page_procurement() -> None:
+    st.subheader("Procurement Mix")
+
+    components = st.session_state.get("last_components", [])
+    mix_comp = next((c for c in components if c.get("type") == "mix_table"), None)
+
+    if not mix_comp and not st.session_state.get("last_summary"):
+        empty_state_message()
+        return
+
+    if mix_comp:
+        _render_mix_table(mix_comp)
+
+    econ_comp = next((c for c in components
+                      if c.get("type") == "metrics" and c.get("title") == "Economic impact"), None)
+    if econ_comp:
+        st.markdown("---")
+        st.markdown("**Economic impact**")
+        render_metric_tiles(econ_comp.get("items", []))
+
+    recovery_comp = next((c for c in components if c.get("type") == "recovery_table"), None)
+    if recovery_comp:
+        st.markdown("---")
+        _render_recovery_table(recovery_comp)
+
+    tradeoff_comp = next((c for c in components if c.get("type") == "policy_tradeoff"), None)
+    if tradeoff_comp:
+        _render_policy_tradeoff(tradeoff_comp)
+
+
+def _render_mix_table(comp: dict) -> None:
+    st.markdown("**Recommended procurement mix**")
+    rows = comp.get("rows", [])
+    if rows:
+        import pandas as pd
+
+        display_keys = [
+            ("supplier",              "Supplier"),
+            ("grade",                 "Grade"),
+            ("volume_mbd",            "Volume (mbd)"),
+            ("effective_volume_mbd",  "Expected delivery (mbd)"),
+            ("price_per_bbl",         "Price ($/bbl)"),
+            ("transit_days",          "Transit (days)"),
+            ("delivery_risk_fraction", "Corridor risk"),
+            ("sanctions_status",      "Sanctions"),
+        ]
+        df_rows: list[dict] = []
+        for r in rows:
+            row: dict = {}
+            for key, label in display_keys:
+                val = r.get(key, "")
+                if key == "price_per_bbl" and isinstance(val, (int, float)):
+                    val = f"${val:.2f}"
+                elif key in ("volume_mbd", "effective_volume_mbd") and isinstance(val, (int, float)):
+                    val = f"{val:.3f}"
+                elif key == "delivery_risk_fraction":
+                    val = f"{round(float(val) * 100)}%" if isinstance(val, (int, float)) and val else "—"
+                row[label] = val
+            df_rows.append(row)
+        st.dataframe(
+            pd.DataFrame(df_rows), use_container_width=True, hide_index=True,
+        )
+
+    spr = comp.get("spr_bridge")
+    if spr:
+        draw = spr.get("drawdown_mbd", 0)
+        days = spr.get("days_of_cover", 0)
+        st.warning(
+            f"SPR bridge: {draw} mbd for {days} days "
+            f"(partial drawdown at max sustainable rate)",
+        )
+
+
+def _render_recovery_table(comp: dict) -> None:
+    st.markdown("**Recovery levers (ranked by net benefit)**")
+    rows = comp.get("rows", [])
+    if rows:
+        import pandas as pd
+        display_keys = [
+            ("lever",              "Lever"),
+            ("description",        "Description"),
+            ("avoided_loss_usd",   "Avoided loss ($)"),
+            ("lever_cost_usd",     "Cost ($)"),
+            ("net_benefit_usd",    "Net benefit ($)"),
+            ("time_to_effect_days", "Time (days)"),
+        ]
+        df_rows: list[dict] = []
+        for r in rows:
+            row: dict = {}
+            for key, label in display_keys:
+                val = r.get(key, "")
+                if key in ("avoided_loss_usd", "lever_cost_usd", "net_benefit_usd"):
+                    if isinstance(val, (int, float)):
+                        val = f"${val:,.0f}"
+                row[label] = val
+            df_rows.append(row)
+        st.dataframe(
+            pd.DataFrame(df_rows), use_container_width=True, hide_index=True,
+        )
+
+
+def _render_policy_tradeoff(comp: dict) -> None:
+    data = comp.get("data", {})
+    if data:
+        fiscal = data.get("subsidy_fiscal_cost_usd", 0)
+        cpi = data.get("passthrough_cpi_bps", 0)
+        st.info(
+            f"**Policy tradeoff — subsidy vs pass-through:** "
+            f"Subsidize fuel = ${fiscal / 1e9:.2f} bn fiscal cost; "
+            f"pass through = +{cpi} bps CPI impact."
+        )
+
+
+# ── Page: Priority Actions ───────────────────────────────────────────────────
+
+def page_actions() -> None:
+    st.subheader("Priority Actions")
+
+    summary = st.session_state.get("last_summary")
+    if not summary:
+        empty_state_message()
+        return
+
+    plan = summary.get("response_plan", {}) or {}
+
+    escalation = summary.get("escalation_level") or plan.get("escalation", "routine")
+    esc_colors = {"critical": "#ef4444", "elevated": "#f59e0b",
+                  "watch": "#3b82f6", "routine": "#22c55e"}
+    col = esc_colors.get(escalation, "#6b7280")
+    st.markdown(
+        f'<div style="display:inline-block;padding:6px 16px;border-radius:20px;'
+        f'background:{col}22;color:{col};font-weight:600;font-size:15px;'
+        f'border:1px solid {col}44;margin-bottom:16px">'
+        f'Escalation: {escalation.upper()}</div>',
+        unsafe_allow_html=True,
+    )
+
+    actions = plan.get("priority_actions", [])
+    if actions:
+        for i, action in enumerate(actions, 1):
+            st.markdown(f"{i}. {action}")
+    else:
+        st.caption("No priority actions for this run.")
+
+    recommendation = summary.get("final_recommendation") or plan.get("final_recommendation")
+    if recommendation:
+        st.markdown("---")
+        st.markdown("**Board recommendation**")
+        st.markdown(recommendation)
+
+
+# ── Page: Observability ──────────────────────────────────────────────────────
+
+def page_observability() -> None:
+    render_observability(EIB_API_URL, st.session_state.get("last_summary"))
+
+
+# ── Helpers ──────────────────────────────────────────────────────────────────
+
+def _get_twin_state() -> dict:
+    """Get twin_state for the simulation map.
+
+    Priority: stored twin_snapshot (full corridor_risks/impacts/routes from
+    the last board run) > live twin endpoint > empty dict.
+    """
+    snap = st.session_state.get("last_twin_snapshot")
+    if snap:
+        return snap
+    twin = fetch_twin()
+    return (twin or {}).get("twin_state", {}) or {}
+
+
+# ── Main ─────────────────────────────────────────────────────────────────────
 
 def main() -> None:
     st.set_page_config(
@@ -485,35 +412,25 @@ def main() -> None:
         page_icon="⚡",
         layout="wide",
     )
-    _init_state()
+    init_state()
 
-    # Process any queued message (from preset / follow-up / chat input).
     pending = st.session_state.get("pending_message")
     if pending:
         st.session_state["pending_message"] = None
         with st.spinner("Running the board..."):
-            _send_message(pending)
+            send_message(pending)
 
-    _render_sidebar()
+    render_sidebar()
 
-    tab_board, tab_obs = st.tabs(["Board", "Observability"])
-
-    with tab_board:
-        left, right = st.columns([3, 2])
-        with left:
-            _render_map()
-            _render_metrics()
-            _render_run_warnings()
-            _render_news_sources()
-            _render_economic_impact()
-            _render_recovery_table()
-            _render_mix_table()
-            _render_priority_actions()
-        with right:
-            _render_chat()
-
-    with tab_obs:
-        render_observability(EIB_API_URL, st.session_state["last_summary"])
+    pages = [
+        st.Page(page_board,         title="Board",          icon="📊"),
+        st.Page(page_simulation,    title="Simulation",     icon="🚢"),
+        st.Page(page_procurement,   title="Procurement",    icon="📦"),
+        st.Page(page_actions,       title="Actions",        icon="⚡"),
+        st.Page(page_observability, title="Observability",  icon="🔍"),
+    ]
+    nav = st.navigation(pages)
+    nav.run()
 
 
 main()
